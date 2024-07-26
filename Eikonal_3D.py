@@ -5,6 +5,23 @@ from dolfinx.nls.petsc import NewtonSolver
 from mpi4py import MPI
 from dolfinx.io import XDMFFile
 import ufl
+import yaml
+import os
+
+# Call the yaml file you want to use
+yaml_file = "cylinder.yaml"
+
+# Determine parent folder
+parent = os.path.dirname(__file__)
+
+# Read yaml file located in simvascular_mesh/yaml_files
+with open(parent + "/yaml_files/" + yaml_file, "rb") as f:
+    params = yaml.safe_load(f)
+
+yaml_file_name = params["file_name"]
+save_dir = parent + "/results/" + yaml_file_name+ yaml_file_name
+mesh_dir = parent + "/Meshes" + yaml_file_name + yaml_file_name
+
 
 def solve_eikonal(domain, ft, distance: bool, c = 1 ,*face_tag: int):
 
@@ -74,7 +91,8 @@ def solve_eikonal(domain, ft, distance: bool, c = 1 ,*face_tag: int):
     problem = fem.petsc.LinearProblem(a, L, bcs = [bc], petsc_options={"ksp_type": "preonly", "pc_type": "lu"})
     u = problem.solve()
 
-    eps = 0.5
+    #NEED TO MAKE THE EPS NUMBER RELATED TO THE MESH SIZE
+    eps = 0.1
     F = ufl.sqrt(ufl.inner(ufl.grad(u), ufl.grad(u)))*v*ufl.dx - f*v*ufl.dx + eps * ufl.inner(ufl.grad(abs(u)), ufl.grad(v)) * ufl.dx
 
     # Jacobian of F
@@ -116,13 +134,18 @@ def export_soln(path_export, mesh_, function_):
         file.write_function(function_)
 
 
-# FOR 0103_H_PULM_H_coarse
-face_tags_list = list(range(1, 67))
-domain, facet = import_mesh("Meshes/0103_H_PULM_H_coarse/0103_H_PULM_H_coarse.xdmf","Meshes/0103_H_PULM_H_coarse/0103_H_PULM_H_coarse_facet_markers.xdmf")
-dis = solve_eikonal(domain, facet, True, 1 ,*face_tags_list)
-solution = solve_eikonal(domain, facet, False, dis , 87)
+domain, facet = import_mesh(mesh_dir + ".xdmf", mesh_dir + "_facet_markers.xdmf")
 
-export_soln("results/Eikonal_3D/newcode_0725/0103_H_PULM_H_coarse/distance_field.xdmf",domain,dis)
-#exporting solution
-export_soln("results/Eikonal_3D/newcode_0725/0103_H_PULM_H_coarse/final_soln.xdmf",domain,solution)
+if params["multiple_wall_tag"] == True:
+    face_tags = list(range(params["wall_face_tag"],params["wall_face_tag_2"]))
+    dis = solve_eikonal(domain, facet, True, 1 , *face_tags)
 
+else:
+    dis = solve_eikonal(domain, facet, True, 1 , params["wall_face_tag"])
+
+
+
+solution = solve_eikonal(domain, facet, False, dis , params["inlet_face_tag"])
+
+export_soln(save_dir + "_distance_field.xdmf",domain,dis)
+export_soln(save_dir + "_final_soln.xdmf",domain,solution)
