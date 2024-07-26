@@ -1,0 +1,16 @@
+#cylinder
+
+#parameters
+file_name: /cylinder
+
+
+multiple_wall_tag: False
+
+# this is assuming the wall tags are the first tags and they are each after the next
+wall_face_tag: 1
+wall_face_tag_2: 
+
+inlet_face_tag: 2
+
+
+

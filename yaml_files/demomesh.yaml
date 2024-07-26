@@ -1,0 +1,13 @@
+#Demomesh
+
+#parameters
+file_name: /demomesh
+
+
+multiple_wall_tag: True
+
+# this is assuming the wall tags are the first tags and they are each after the next
+wall_face_tag: 1
+wall_face_tag_2: 3 #this is always one more than you need (these would be tags 1 and 2)
+
+inlet_face_tag: 3 
