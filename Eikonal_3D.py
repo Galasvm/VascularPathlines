@@ -19,7 +19,7 @@ with open(parent + "/yaml_files/" + yaml_file, "rb") as f:
     params = yaml.safe_load(f)
 
 yaml_file_name = params["file_name"]
-save_dir = parent + "/results/" + yaml_file_name + yaml_file_name
+save_dir = parent + "/results/squared/" + yaml_file_name + yaml_file_name
 mesh_dir = parent + "/Meshes" + yaml_file_name + yaml_file_name
 
 
@@ -55,7 +55,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
 
     else:
         # defining f as 1 over the distance of each node
-        f = 1/(1+c)
+        f = 1/(c**2)
         domain.topology.create_connectivity(domain.topology.dim - 1,
                                             domain.topology.dim)
         inlet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
@@ -78,8 +78,6 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
         # define the dirichlet boundary condition at one point
         bc = fem.dirichletbc(default_scalar_type(0), inlet_dof, V)
 
-
-# Define the unknown function and test function
     u = fem.Function(V)
     v = ufl.TestFunction(V)
     uh = ufl.TrialFunction(V)
@@ -96,10 +94,9 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
                                                      "pc_type": "lu"})
     u = problem.solve()
 
-# NEED TO MAKE THE EPS NUMBER RELATED TO THE MESH SIZE
-    eps = 0.1
-    F = ufl.sqrt(ufl.inner(ufl.grad(u), ufl.grad(u)))*v*ufl.dx
-    - f*v*ufl.dx + eps * ufl.inner(ufl.grad(abs(u)), ufl.grad(v)) * ufl.dx
+    # NEED TO MAKE THE EPS NUMBER RELATED TO THE MESH SIZE
+    eps = 0.2
+    F = ufl.sqrt(ufl.inner(ufl.grad(u), ufl.grad(u)))*v*ufl.dx- f*v*ufl.dx + eps * ufl.inner(ufl.grad(abs(u)), ufl.grad(v)) * ufl.dx
 
     # Jacobian of F
     J = ufl.derivative(F, u, ufl.TrialFunction(V))
@@ -111,7 +108,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
     # Set solver options
     solver.rtol = 1e-6
     solver.max_it = 80
-# Increase the max iterations
+    # Increase the max iterations
 
     # Solve the problem
     solver.solve(u)
@@ -142,6 +139,7 @@ def export_soln(path_export, mesh_, function_):
 domain, facet = import_mesh(mesh_dir + ".xdmf",
                             mesh_dir + "_facet_markers.xdmf")
 
+
 if params["multiple_wall_tag"] is True:
     face_tags = list(range(params["wall_face_tag"], params["wall_face_tag_2"]))
     dis = solve_eikonal(domain, facet, True, 1, *face_tags)
@@ -149,7 +147,9 @@ if params["multiple_wall_tag"] is True:
 else:
     dis = solve_eikonal(domain, facet, True, 1, params["wall_face_tag"])
 
-solution = solve_eikonal(domain, facet, False, dis, params["inlet_face_tag"])
+if params["just_distance"] is False:
+    solution = solve_eikonal(domain, facet, False, dis,
+                             params["inlet_face_tag"])
+    export_soln(save_dir + "_final_soln.xdmf", domain, solution)
 
 export_soln(save_dir + "_distance_field.xdmf", domain, dis)
-export_soln(save_dir + "_final_soln.xdmf", domain, solution)
