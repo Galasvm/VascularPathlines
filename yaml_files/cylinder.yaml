@@ -12,5 +12,9 @@ wall_face_tag_2:
 
 inlet_face_tag: 2
 
+# what to run
+
+just_distance: False
+
 
 
