@@ -1,7 +1,9 @@
 import numpy as np
-from dolfinx import fem, default_scalar_type
+import dolfinx
+from dolfinx import fem, default_scalar_type, log
 from dolfinx.fem import functionspace
 from dolfinx.nls.petsc import NewtonSolver
+from petsc4py import PETSc
 from mpi4py import MPI
 from dolfinx.io import XDMFFile
 import ufl
@@ -9,7 +11,7 @@ import yaml
 import os
 
 # Call the yaml file you want to use
-yaml_file = "demomesh.yaml"
+yaml_file = "0103_H_PULM_H_coarse.yaml"
 
 # Determine parent folder
 parent = os.path.dirname(__file__)
@@ -19,7 +21,7 @@ with open(parent + "/yaml_files/" + yaml_file, "rb") as f:
     params = yaml.safe_load(f)
 
 yaml_file_name = params["file_name"]
-save_dir = parent + "/results/squared/" + yaml_file_name + yaml_file_name
+save_dir = parent + "/results/exp" + yaml_file_name + yaml_file_name
 mesh_dir = parent + "/Meshes" + yaml_file_name + yaml_file_name
 
 
@@ -55,7 +57,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
 
     else:
         # defining f as 1 over the distance of each node
-        f = 1/(c**2)
+        f = 1/(2**(50*c))
         domain.topology.create_connectivity(domain.topology.dim - 1,
                                             domain.topology.dim)
         inlet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
@@ -94,10 +96,19 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
                                                      "pc_type": "lu"})
     u = problem.solve()
 
-    # NEED TO MAKE THE EPS NUMBER RELATED TO THE MESH SIZE
-    eps = 0.2
-    F = ufl.sqrt(ufl.inner(ufl.grad(u), ufl.grad(u)))*v*ufl.dx- f*v*ufl.dx + eps * ufl.inner(ufl.grad(abs(u)), ufl.grad(v)) * ufl.dx
+    # We need to make eps related to the mesh size
+    tdim = domain.topology.dim
+    num_cells = domain.topology.index_map(tdim).size_local
+    cells = np.arange(num_cells, dtype=np.int32)
+    domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology, domain.geometry)
+    h = dolfinx.cpp.mesh.h(domain, tdim, cells)
+    hmax = max(h)
+    print(f"max cell size: {hmax}")
+    eps = hmax/2
+    print(f"eps: {eps}")
 
+    F = ufl.sqrt(ufl.inner(ufl.grad(u), ufl.grad(u)))*v*ufl.dx - f*v*ufl.dx
+    F += eps * ufl.inner(ufl.grad(abs(u)), ufl.grad(v)) * ufl.dx
     # Jacobian of F
     J = ufl.derivative(F, u, ufl.TrialFunction(V))
 
@@ -107,10 +118,10 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
 
     # Set solver options
     solver.rtol = 1e-6
-    solver.max_it = 80
-    # Increase the max iterations
+    solver.report = True
+    # can turn this off 
+    log.set_log_level(log.LogLevel.INFO)
 
-    # Solve the problem
     solver.solve(u)
 
     return u

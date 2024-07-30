@@ -3,6 +3,7 @@
 #parameters
 file_name: /demomesh
 
+# if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
 multiple_wall_tag: True
 

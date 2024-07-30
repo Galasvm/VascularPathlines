@@ -5,6 +5,11 @@ This is an example script of how one could convert a mesh output from
 SimVascular into a format which is redeble in FEniCS.
 """
 
+'''
+Use python convert_vtu_and_vtp.py -ivtp [path] -ivtu [path] -o .xdmf
+
+
+'''
 from os import path
 from argparse import ArgumentParser
 
