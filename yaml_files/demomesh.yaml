@@ -2,6 +2,7 @@
 
 #parameters
 file_name: /demomesh
+saving_dir: /results/trials_exp_07312024
 
 # if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
@@ -9,10 +10,12 @@ multiple_wall_tag: True
 
 # this is assuming the wall tags are the first tags and they are each after the next
 wall_face_tag: 1
-wall_face_tag_2: 3 #this is always one more than you need (these would be tags 1 and 2)
+wall_face_tag_2: 3 # this is always one more than you need (these would be tags 1 and 2)
 
-inlet_face_tag: 3 
+inlet_face_tag: 3 # this is the exact inlet facetag number
 
 # what to run
 
 just_distance: False
+
+save_eikonal: True
