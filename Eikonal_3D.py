@@ -3,7 +3,6 @@ import dolfinx
 from dolfinx import fem, default_scalar_type, log
 from dolfinx.fem import functionspace
 from dolfinx.nls.petsc import NewtonSolver
-from petsc4py import PETSc
 from mpi4py import MPI
 from dolfinx.io import XDMFFile
 import ufl
@@ -21,7 +20,7 @@ with open(parent + "/yaml_files/" + yaml_file, "rb") as f:
     params = yaml.safe_load(f)
 
 yaml_file_name = params["file_name"]
-save_dir = parent + "/results/exp" + yaml_file_name + yaml_file_name
+save_dir = parent + params["saving_dir"] + yaml_file_name + yaml_file_name
 mesh_dir = parent + "/Meshes" + yaml_file_name + yaml_file_name
 
 
@@ -57,7 +56,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
 
     else:
         # defining f as 1 over the distance of each node
-        f = 1/(2**(50*c))
+        f = 1/(2**(100*c))
         domain.topology.create_connectivity(domain.topology.dim - 1,
                                             domain.topology.dim)
         inlet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
@@ -100,7 +99,8 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
     tdim = domain.topology.dim
     num_cells = domain.topology.index_map(tdim).size_local
     cells = np.arange(num_cells, dtype=np.int32)
-    domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology, domain.geometry)
+    domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology,
+                                           domain.geometry)
     h = dolfinx.cpp.mesh.h(domain, tdim, cells)
     hmax = max(h)
     print(f"max cell size: {hmax}")
@@ -119,7 +119,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
     # Set solver options
     solver.rtol = 1e-6
     solver.report = True
-    # can turn this off 
+    # can turn this off
     log.set_log_level(log.LogLevel.INFO)
 
     solver.solve(u)
@@ -151,6 +151,7 @@ domain, facet = import_mesh(mesh_dir + ".xdmf",
                             mesh_dir + "_facet_markers.xdmf")
 
 
+# Checking if the mesh has multiple walls with separate mesh tags
 if params["multiple_wall_tag"] is True:
     face_tags = list(range(params["wall_face_tag"], params["wall_face_tag_2"]))
     dis = solve_eikonal(domain, facet, True, 1, *face_tags)
@@ -158,9 +159,13 @@ if params["multiple_wall_tag"] is True:
 else:
     dis = solve_eikonal(domain, facet, True, 1, params["wall_face_tag"])
 
+# Checking if only solving for the distance
 if params["just_distance"] is False:
     solution = solve_eikonal(domain, facet, False, dis,
                              params["inlet_face_tag"])
-    export_soln(save_dir + "_final_soln.xdmf", domain, solution)
 
-export_soln(save_dir + "_distance_field.xdmf", domain, dis)
+# Checking if the solution should be saved
+if params["save_eikonal"] is True:
+    export_soln(save_dir + "_distance_field.xdmf", domain, dis)
+    if params["just_distance"] is False:
+        export_soln(save_dir + "_final_soln.xdmf", domain, solution)
