@@ -1,3 +1,6 @@
 /results
-/Meshes/0103_H_PULM_H_coarse
+/Meshes
 /yaml_files/0103_H_PULM_H_coarse.yaml
+/yaml_files/0168_H_PULMFON_SVD_coarse.yaml
+/yaml_files/0100_A_AO_COA_finer.yaml
+/yaml_files/0073_H_CORO_H_coarse.yaml
