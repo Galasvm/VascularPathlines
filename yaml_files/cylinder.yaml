@@ -2,7 +2,7 @@
 
 #parameters
 file_name: /cylinder
-saving_dir: /results/trials_exp_07312024
+saving_dir: /results/trials_exp_08012024/alpha_10times
 
 # if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
@@ -13,9 +13,10 @@ wall_face_tag: 1
 wall_face_tag_2: # this is always one more than you need
 
 inlet_face_tag: 2 # this is the exact inlet facetag number
+outlet_face_tag: 3 # this is the outlet facetag number to use for evaluation of speed
 
 # what to run
 
 just_distance: False
 
-save_eikonal: True
+save_eikonal: False

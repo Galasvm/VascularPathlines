@@ -2,7 +2,7 @@
 
 #parameters
 file_name: /demomesh
-saving_dir: /results/trials_exp_07312024
+saving_dir: /results/trials_exp_08012024/alpha_1000
 
 # if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
@@ -13,6 +13,7 @@ wall_face_tag: 1
 wall_face_tag_2: 3 # this is always one more than you need (these would be tags 1 and 2)
 
 inlet_face_tag: 3 # this is the exact inlet facetag number
+outlet_face_tag: 5 # this is the outlet facetag number to use for evaluation of speed
 
 # what to run
 
