@@ -10,7 +10,7 @@ import yaml
 import os
 
 # Call the yaml file you want to use
-yaml_file = "0103_H_PULM_H_coarse.yaml"
+yaml_file = "0100_A_AO_COA_finer.yaml"
 
 # Determine parent folder
 parent = os.path.dirname(__file__)
@@ -23,8 +23,8 @@ yaml_file_name = params["file_name"]
 save_dir = parent + params["saving_dir"] + yaml_file_name + yaml_file_name
 mesh_dir = parent + "/Meshes" + yaml_file_name + yaml_file_name
 
-
-def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
+def solve_eikonal(domain, ft, distance: bool, c=1, outlet_face_tag=0,
+                  *face_tag: int):
     V = functionspace(domain, ("Lagrange", 1))
 
     # putting all the dofs of the faces we want to select for the boundary
@@ -44,9 +44,9 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
         face = ft.find(tag)
         all = np.append(all, face)
 
+    # Preparing parameters based on what field is being solved
     if distance is True:
-        # defining the speed as 1 since we are looking for the distance field
-        f = fem.Constant(domain, default_scalar_type(1))
+
         # setting the wall of the vessel as the boundary condition
         domain.topology.create_connectivity(domain.topology.dim - 1,
                                             domain.topology.dim)
@@ -54,19 +54,21 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
                                                 all)
         bc = fem.dirichletbc(default_scalar_type(0), wall_dofs, V)
 
+        # defining the speed as 1 since we are looking for the distance field
+        f = fem.Constant(domain, default_scalar_type(1))
+
     else:
-        # defining f as 1 over the distance of each node
-        f = 1/(2**(100*c))
+
         domain.topology.create_connectivity(domain.topology.dim - 1,
                                             domain.topology.dim)
         inlet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
                                                  all)
+
         # now we need to find the dof at the center of the facet to select as
         # the source point (the point with the greater distance from the walls)
 
         c_values = c.vector.array  # Get the solution values as a numpy array
         # Find the index of the maximum value in the selected values
-
         selected_values = c_values[inlet_dofs]
         max_selected_index = np.argmax(selected_values)
 
@@ -79,6 +81,45 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
         # define the dirichlet boundary condition at one point
         bc = fem.dirichletbc(default_scalar_type(0), inlet_dof, V)
 
+        # CALCULATING ALPHA
+        # now we need to calculate alpha for the wave speed, which is related
+        # to a small vessel diameter in the geometry (a face outlet
+        # selected by the user)
+
+        # first we find the dofs of the outlet selected
+        outlet = ft.find(outlet_face_tag)
+        outlet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
+                                                  outlet)
+        # then we find the node with the highest minimum distance from the
+        # walls (the center) for the outlet. We also print out the highest
+        # minimum distance from the walls for the inlet 
+        selected_values_out = c_values[outlet_dofs]
+        max_distance_outlet = selected_values_out.max()
+        max_distance_inlet = selected_values.max()
+        print(f"max_distance_outlet is: {max_distance_outlet}")
+        print(f"max_distance_inlet is: {max_distance_inlet}")
+
+        # alpha is related to the smallest vessel diameter
+
+        alpha = 10/max_distance_outlet
+        print(f"alpha: {alpha}")
+
+        # now we set the wave speed proportional to the minimum distance field
+        f = 1/(2**(alpha*c))
+
+    # CALCULATING EPS: We need to make eps related to the mesh size
+    num_cells = domain.topology.index_map(domain.topology.dim).size_local
+    cells = np.arange(num_cells, dtype=np.int32)
+    domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology,
+                                           domain.geometry)
+    h = dolfinx.cpp.mesh.h(domain, domain.topology.dim, cells)
+    # finding the max cell size now
+    hmax = max(h)
+    print(f"max cell size: {hmax}")
+    eps = hmax/2
+    print(f"eps: {eps}")
+
+    # set up the problem
     u = fem.Function(V)
     v = ufl.TestFunction(V)
     uh = ufl.TrialFunction(V)
@@ -94,18 +135,6 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
                                       petsc_options={"ksp_type": "preonly",
                                                      "pc_type": "lu"})
     u = problem.solve()
-
-    # We need to make eps related to the mesh size
-    tdim = domain.topology.dim
-    num_cells = domain.topology.index_map(tdim).size_local
-    cells = np.arange(num_cells, dtype=np.int32)
-    domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology,
-                                           domain.geometry)
-    h = dolfinx.cpp.mesh.h(domain, tdim, cells)
-    hmax = max(h)
-    print(f"max cell size: {hmax}")
-    eps = hmax/2
-    print(f"eps: {eps}")
 
     F = ufl.sqrt(ufl.inner(ufl.grad(u), ufl.grad(u)))*v*ufl.dx - f*v*ufl.dx
     F += eps * ufl.inner(ufl.grad(abs(u)), ufl.grad(v)) * ufl.dx
@@ -154,14 +183,15 @@ domain, facet = import_mesh(mesh_dir + ".xdmf",
 # Checking if the mesh has multiple walls with separate mesh tags
 if params["multiple_wall_tag"] is True:
     face_tags = list(range(params["wall_face_tag"], params["wall_face_tag_2"]))
-    dis = solve_eikonal(domain, facet, True, 1, *face_tags)
+    dis = solve_eikonal(domain, facet, True, 1, 0, *face_tags)
 
 else:
-    dis = solve_eikonal(domain, facet, True, 1, params["wall_face_tag"])
+    dis = solve_eikonal(domain, facet, True, 1, 0, params["wall_face_tag"])
 
 # Checking if only solving for the distance
 if params["just_distance"] is False:
     solution = solve_eikonal(domain, facet, False, dis,
+                             params["outlet_face_tag"],
                              params["inlet_face_tag"])
 
 # Checking if the solution should be saved
