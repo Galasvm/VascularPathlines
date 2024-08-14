@@ -10,7 +10,7 @@ import yaml
 import os
 
 # Call the yaml file you want to use
-yaml_file = "0100_A_AO_COA_finer.yaml"
+yaml_file = "cylinder.yaml"
 
 # Determine parent folder
 parent = os.path.dirname(__file__)
@@ -23,8 +23,9 @@ yaml_file_name = params["file_name"]
 save_dir = parent + params["saving_dir"] + yaml_file_name + yaml_file_name
 mesh_dir = parent + "/Meshes" + yaml_file_name + yaml_file_name
 
-def solve_eikonal(domain, ft, distance: bool, c=1, outlet_face_tag=0,
-                  *face_tag: int):
+
+def solve_eikonal(domain, ft, distance: bool, c=1,
+                  outlet_face_tag=0, *face_tag: int):
     V = functionspace(domain, ("Lagrange", 1))
 
     # putting all the dofs of the faces we want to select for the boundary
@@ -92,7 +93,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1, outlet_face_tag=0,
                                                   outlet)
         # then we find the node with the highest minimum distance from the
         # walls (the center) for the outlet. We also print out the highest
-        # minimum distance from the walls for the inlet 
+        # minimum distance from the walls for the inlet
         selected_values_out = c_values[outlet_dofs]
         max_distance_outlet = selected_values_out.max()
         max_distance_inlet = selected_values.max()
@@ -101,7 +102,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1, outlet_face_tag=0,
 
         # alpha is related to the smallest vessel diameter
 
-        alpha = 10/max_distance_outlet
+        alpha = 20/max_distance_outlet
         print(f"alpha: {alpha}")
 
         # now we set the wave speed proportional to the minimum distance field

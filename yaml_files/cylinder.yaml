@@ -2,7 +2,7 @@
 
 #parameters
 file_name: /cylinder
-saving_dir: /results/trials_exp_08012024/alpha_10times
+saving_dir: /results
 
 # if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
@@ -19,4 +19,4 @@ outlet_face_tag: 3 # this is the outlet facetag number to use for evaluation of 
 
 just_distance: False
 
-save_eikonal: False
+save_eikonal: True

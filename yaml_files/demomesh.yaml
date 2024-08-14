@@ -2,7 +2,7 @@
 
 #parameters
 file_name: /demomesh
-saving_dir: /results/trials_exp_08012024/alpha_1000
+saving_dir: /results/trials_exp_08012024/alpha_10overdistance
 
 # if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
