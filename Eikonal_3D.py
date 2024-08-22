@@ -92,7 +92,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1,
 
         # alpha is related to the smallest vessel diameter
 
-        alpha = 5/max_distance_outlet
+        alpha = 1/max_distance_outlet
         print(f"alpha: {alpha}")
 
         # now we set the wave speed proportional to the minimum distance field
