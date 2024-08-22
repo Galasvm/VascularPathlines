@@ -2,7 +2,7 @@
 
 #parameters
 file_name: /cylinder
-saving_dir: /results
+saving_dir: /results/08202024/extreme_nodes/alpha_2overdistance
 
 # if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
@@ -17,6 +17,6 @@ outlet_face_tag: 3 # this is the outlet facetag number to use for evaluation of 
 
 # what to run
 
-just_distance: False
-
-save_eikonal: True
+just_distance: false
+save_eikonal: False
+save_cluster: True
