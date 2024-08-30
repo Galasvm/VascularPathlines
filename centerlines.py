@@ -6,25 +6,10 @@ from dolfinx.nls.petsc import NewtonSolver
 from mpi4py import MPI
 from dolfinx.io import XDMFFile
 import ufl
-import yaml
-import os
 from scipy.spatial import cKDTree
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse import csr_matrix
-
-# Call the yaml file you want to use
-yaml_file = "demomesh.yaml"
-
-# Determine parent folder
-parent = os.path.dirname(__file__)
-
-# Read yaml file located in simvascular_mesh/yaml_files
-with open(parent + "/yaml_files/" + yaml_file, "rb") as f:
-    params = yaml.safe_load(f)
-
-yaml_file_name = params["file_name"]
-save_dir = parent + params["saving_dir"] + yaml_file_name
-mesh_dir = parent + "/Meshes" + yaml_file_name + yaml_file_name
+import vtk
 
 
 def solve_eikonal(domain, ft, distance: bool, c=1,
@@ -103,7 +88,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1,
 
     # CALCULATING EPS: We need to make eps related to the mesh size
     # finding the max cell size now
-    hmax = h_max(domain)
+    hmax, hmin = h_max(domain)
     print(f"max cell size: {hmax}")
     eps = hmax/2
     print(f"eps: {eps}")
@@ -142,7 +127,8 @@ def h_max(domain):
     h = dolfinx.cpp.mesh.h(domain, domain.topology.dim, cells)
     # finding the max cell size now
     h_max = max(h)
-    return h_max
+    h_min = min(h)
+    return h_max, h_min
 
 
 def set_problem(funcspace, boundary, epsilon, f):
@@ -178,7 +164,41 @@ def set_problem(funcspace, boundary, epsilon, f):
     #log.set_log_level(log.LogLevel.INFO)
 
     solver.solve(u)
+
     return u
+
+
+def gradient_distance(mesh, time_distance_map):
+
+    # Compute the symbolic gradient of the solution u
+    grad_u = ufl.grad(time_distance_map)
+
+    # Define a vector function space for the gradient (e.g., Lagrange element of degree 1)
+    W = functionspace(mesh, ("Lagrange", 1, (3, )))
+
+    # Define the trial and test functions for the projection problem
+    w = ufl.TrialFunction(W)
+    v = ufl.TestFunction(W)
+
+    # Set up the variational problem to project the gradient
+    a = ufl.inner(w, v) * ufl.dx
+    L = ufl.inner(grad_u, v) * ufl.dx
+
+    # Solve the projection problem
+    w = fem.Function(W)
+    problem = fem.petsc.LinearProblem(a, L, u=w,
+                                      petsc_options={"ksp_type": "preonly",
+                                                     "pc_type": "lu"})
+    problem.solve()
+
+    x_comp = w.x.array.reshape(-1, 3)[:, 0]  # x component
+    y_comp = w.x.array.reshape(-1, 3)[:, 1]  # y component
+    z_comp = w.x.array.reshape(-1, 3)[:, 2]
+
+    # Combine into a single NumPy array
+    gradient_array = np.vstack((x_comp, y_comp, z_comp)).T
+
+    return w, gradient_array
 
 
 def import_mesh(path_mesh, path_facets):
@@ -193,20 +213,19 @@ def import_mesh(path_mesh, path_facets):
     return domain_, facet_
 
 
-def export_soln(path_export, mesh_, function_):
+def export_soln(path_export, mesh, function):
 
     # Save the solution in XDMF format for visualization
     with XDMFFile(MPI.COMM_WORLD, path_export, "w") as file:
-        file.write_mesh(mesh_)
-        file.write_function(function_)
+        file.write_mesh(mesh)
+        file.write_function(function)
 
 
-def cluster_map(seg):
+def cluster_map(seg, mesh, num_clusters=25):
     values = seg.x.array
-    print(f"this is how many values there are: {len(values)}")
+    print(f"this is how many nodes there are: {len(values)}")
     sorted_indices = np.argsort(values)
     # Determine the number of clusters needed
-    num_clusters = 40
     num_points_per_cluster = len(values) // num_clusters
     print(f"number of points per clusters: {num_points_per_cluster}")
 
@@ -228,7 +247,7 @@ def cluster_map(seg):
     if end_idx < len(values):
         clustered_values[sorted_indices[end_idx:]] = num_clusters
 
-    V = functionspace(domain, ("Lagrange", 1))
+    V = functionspace(mesh, ("Lagrange", 1))
     u = fem.Function(V)
 
     # Assign the clustered values back to the array
@@ -240,8 +259,14 @@ def separate_clusters(mesh, clustersmap):
     coordinates = mesh.geometry.x
     num_clusters = int(np.max(clustersmap.x.array)) + 1
 
+    dis_max, dis_min = h_max(mesh)
+    distance_threshold = dis_max * 0.8
+    print(f"distance threshold: {distance_threshold}")
+    print(f"min distance: {dis_min} and max distance: {dis_max}")
+
     new_clusters = clustersmap.x.array.copy()
     next_cluster_id = num_clusters
+    components = {}
 
     # Step 1: Separate clusters
     for cluster_id in range(num_clusters):
@@ -255,13 +280,6 @@ def separate_clusters(mesh, clustersmap):
         # Build a k-d tree for the cluster nodes to find close neighbors
         tree = cKDTree(cluster_coords)
 
-        # Define a distance threshold to determine connected nodes
-        num_cells = mesh.topology.index_map(mesh.topology.dim).size_local
-        cells = np.arange(num_cells, dtype=np.int32)
-        domain = dolfinx.cpp.mesh.Mesh_float64(mesh.comm, mesh.topology, mesh.geometry)
-        h = dolfinx.cpp.mesh.h(domain, domain.topology.dim, cells)
-        distance_threshold = max(h) 
-
         # Find pairs of nodes that are close to each other
         pairs = tree.query_pairs(r=distance_threshold)
 
@@ -272,11 +290,13 @@ def separate_clusters(mesh, clustersmap):
 
         # Find connected components in the graph
         n_components, labels = connected_components(csgraph=graph, directed=False)
+        components[cluster_id] = n_components
 
         # If there is more than one connected component, separate them into new clusters
         if n_components > 1:
             for i in range(n_components):
                 component_indices = cluster_indices[labels == i]
+
                 if i == 0:
                     # Keep the first component in the original cluster
                     new_clusters[component_indices] = cluster_id
@@ -284,7 +304,8 @@ def separate_clusters(mesh, clustersmap):
                     # Assign a new cluster ID to the second component
                     new_clusters[component_indices] = next_cluster_id
                     next_cluster_id += 1
-
+        
+    print(f"connected components list: {components}")
     # Step 2: Handle small clusters by merging into nearby larger clusters
     separated_num_clusters = int(np.max(new_clusters)) + 1
     tree = cKDTree(coordinates)  # Global k-d tree
@@ -293,7 +314,7 @@ def separate_clusters(mesh, clustersmap):
         # Get the indices of nodes in the current cluster
         cluster_indices = np.where(new_clusters == cluster_id)[0]
 
-        if len(cluster_indices) < 40:  # If the cluster is too small, merge it
+        if len(cluster_indices) < 50:  # If the cluster is too small, merge it
             cluster_coords = coordinates[cluster_indices]
             _, nearest_neighbor_indices = tree.query(cluster_coords, k=2)
 
@@ -305,7 +326,6 @@ def separate_clusters(mesh, clustersmap):
             if len(nearest_cluster_ids) > 0:
                 # Find the most common nearest cluster ID to merge into
                 merge_target = np.bincount(nearest_cluster_ids).argmax()
-
                 # Merge the small cluster into the selected nearby cluster
                 new_clusters[cluster_indices] = merge_target
 
@@ -359,45 +379,167 @@ def separate_clusters(mesh, clustersmap):
     u.x.array[:] = new_clusters
     u.x.scatter_forward()
 
-    return u, end_clusters
+    return u, end_clusters, new_clusters
 
 
-domain, facet = import_mesh(mesh_dir + ".xdmf",
-                            mesh_dir + "_facet_markers.xdmf")
+def find_nearest_node(point, coordinates):
+    """
+    Find the index of the nearest node to a given point.
+
+    Parameters:
+    - point: The point to search for (as a numpy array).
+    - coordinates: The coordinates of all nodes (as a numpy array).
+
+    Returns:
+    - The index of the nearest node.
+    """
+    distances = np.linalg.norm(coordinates - point, axis=1)
+    return np.argmin(distances)
 
 
-# Checking if the mesh has multiple walls with separate mesh tags
-if params["multiple_wall_tag"] is True:
-    face_tags = list(range(params["wall_face_tag"], params["wall_face_tag_2"]))
-    dis = solve_eikonal(domain, facet, True, 1, 0, *face_tags)
+def trace_centerline_vtk(mesh, gradient_array, start_point, end_point, step_size=0.05, tolerance=0.1):
+    """
+    Trace a centerline from start_point to end_point by following the gradient of gradient_array,
+    and save the points in VTK format.
 
-else:
-    dis = solve_eikonal(domain, facet, True, 1, 0, params["wall_face_tag"])
+    Parameters:
+    - grad_u_array: Array of gradient vectors at each node (shape should be (num_nodes, dim)).
+    - start_point: The starting point of the centerline (as a numpy array).
+    - end_point: The ending point of the centerline (as a numpy array).
+    - coordinates: The coordinates of all nodes (as a numpy array).
+    - step_size: The size of the step taken along the gradient.
+    - tolerance: The tolerance for stopping the trace when close to the end_point.
 
-# Checking if only solving for the distance
-if params["just_distance"] is False:
-    solution = solve_eikonal(domain, facet, False, dis,
-                             params["outlet_face_tag"],
-                             params["inlet_face_tag"])
+    Returns:
+    - centerline_polydata: vtkPolyData containing the centerline points and lines.
+    """
+    # Initialize the current point to the starting point
+    coordinates = mesh.geometry.x
+    current_point = np.array(start_point)
 
-# Checking if the solution should be saved
-if params["save_eikonal"] is True:
-    export_soln(save_dir + "/eikonal" + yaml_file_name + "_distance_field.xdmf", domain, dis)
-    if params["just_distance"] is False:
-        export_soln(save_dir + "/eikonal" + yaml_file_name + "_final_soln.xdmf", domain, solution)
+    # Initialize vtk points and lines for the centerline
+    centerline_points = vtk.vtkPoints()
+    centerline_lines = vtk.vtkCellArray()
 
-cluster_graph = cluster_map(solution)
-cluster_separate, extreme = separate_clusters(domain, cluster_graph)
-print(f"there are {len(extreme)} extreme nodes: {extreme}")
+    # Insert the starting point
+    previous_point_id = centerline_points.InsertNextPoint(current_point)
 
-if params["save_clustermap"] is True:
-    export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_map.xdmf", domain, cluster_graph)
-    export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_separate.xdmf", domain, cluster_separate)
+    while np.linalg.norm(current_point - end_point) > tolerance:
+        # Find the nearest node to the current point
+        nearest_node_index = find_nearest_node(current_point, coordinates)
 
-with open(save_dir + "/cluster" + yaml_file_name + "_extreme_nodes.txt", "w") as file:
-    file.write(f"there are {len(extreme)} extreme nodes: {extreme}")
-    file.close()
+        # Get the gradient at the nearest node
+        grad_at_point = gradient_array[nearest_node_index]
 
-if params["save_clustermap"] is True:
-    export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_map.xdmf", domain, cluster_graph)
-    export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_separate.xdmf", domain, cluster_separate)
+        # Normalize the gradient to get the direction
+        direction = -grad_at_point / np.linalg.norm(grad_at_point)
+
+        # Take a step in the direction of the gradient
+        next_point = current_point + step_size * direction
+
+        # Insert the new point
+        point_id = centerline_points.InsertNextPoint(next_point)
+
+        # Create a line between the previous and current point
+        line = vtk.vtkLine()
+        line.GetPointIds().SetId(0, previous_point_id)
+        line.GetPointIds().SetId(1, point_id)
+        centerline_lines.InsertNextCell(line)
+
+        # Update the current point and previous_point_id
+        current_point = next_point
+        previous_point_id = point_id   
+    # Create vtkPolyData to hold the centerline points and lines
+
+    return centerline_points, centerline_lines
+
+
+def center_point_cluster(mesh, new_clustermap, cluster_number, distance_map):
+    """
+    Find the middle point for the first or last cluster for the centerline
+    extraction
+
+    Parameters:
+    - mesh: the entire mesh.
+    - new_clustermap: the fenicsx function of the separated clustermap.
+    - cluster_numer: the number of the cluster you want to find the middle point
+    - distance map: this is a funciton with the distance of each node to the
+    boundaries of the mesh (the first time the eikonal equation is solved)
+
+    Returns:
+    - end_point: array of the coordinates of the end point found
+    """
+    coordinates = mesh.geometry.x
+    cluster_ind = np.where(new_clustermap.x.array == cluster_number)[0]
+    max_dist_ind = cluster_ind[np.argmax(distance_map.x.array[cluster_ind])]
+    max_dist_point = coordinates[max_dist_ind]
+
+    return max_dist_point
+
+
+def centerlines(mesh, new_clustermap, extreme_nodes, distance_map, gradient_array):
+    """
+    Trace centerlines from each extreme node to a common end point and combine them into one vtkPolyData.
+
+    Parameters:
+    - mesh: The mesh of the geometry.
+    - new_clustermap: The function that maps the nodes to clusters.
+    - extreme_nodes: The list of extreme nodes to start the centerlines from.
+    - distance_map: The function with the distance of each node to the boundaries.
+    - gradient_array: Array of gradient vectors at each node.
+
+    Returns:
+    - combined_centerline_polydata: vtkPolyData containing all the centerlines.
+    """
+    # Initialize vtkPoints and vtkCellArray for the combined centerline
+    combined_centerline_points = vtk.vtkPoints()
+    combined_centerline_lines = vtk.vtkCellArray()
+
+    point_offset = 0  # Offset to keep track of the point IDs across different centerlines
+
+    # Find the common end point
+    end_pt = center_point_cluster(mesh, new_clustermap, 0, distance_map)
+    print(end_pt)
+
+    for j in range(len(extreme_nodes)):
+        current_cluster = extreme_nodes[j]
+        if current_cluster != 0:
+            start_pt = center_point_cluster(mesh, new_clustermap, current_cluster, distance_map)
+            vessel_points, vessel_lines = trace_centerline_vtk(mesh, gradient_array, start_pt, end_pt)
+
+            # Append the vessel points and lines to the combined centerline
+            for i in range(vessel_points.GetNumberOfPoints()):
+                combined_centerline_points.InsertNextPoint(vessel_points.GetPoint(i))
+
+            vessel_lines.InitTraversal()
+            id_list = vtk.vtkIdList()
+            while vessel_lines.GetNextCell(id_list):
+                # Create a new line with updated point IDs
+                line = vtk.vtkLine()
+                line.GetPointIds().SetId(0, id_list.GetId(0) + point_offset)
+                line.GetPointIds().SetId(1, id_list.GetId(1) + point_offset)
+                combined_centerline_lines.InsertNextCell(line)
+            
+            # Update the point offset for the next centerline
+            point_offset += vessel_points.GetNumberOfPoints()
+
+    # Create vtkPolyData to hold the combined points and lines
+    combined_centerline_polydata = vtk.vtkPolyData()
+    combined_centerline_polydata.SetPoints(combined_centerline_points)
+    combined_centerline_polydata.SetLines(combined_centerline_lines)
+
+    return combined_centerline_polydata
+
+
+def save_centerline_vtk(centerline_polydata, filename):
+    """
+    Save the centerline points and lines to a VTK file.
+
+    Parameters:
+    - centerline_polydata: vtkPolyData containing the centerline points and lines.
+    - filename: The name of the output VTK file.
+    """
+    writer = vtk.vtkXMLPolyDataWriter()
+    writer.SetFileName(filename)
+    writer.SetInputData(centerline_polydata)
+    writer.Write()

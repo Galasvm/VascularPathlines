@@ -98,6 +98,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1,
         # now we set the wave speed proportional to the minimum distance field
         f = 1/(2**(alpha*c))
 
+
     # CALCULATING EPS: We need to make eps related to the mesh size
     # finding the max cell size now
     hmax = h_max(domain)
@@ -105,7 +106,40 @@ def solve_eikonal(domain, ft, distance: bool, c=1,
     eps = hmax/2
     print(f"eps: {eps}")
 
-    u = set_problem(V, bc, eps, f)
+    u = fem.Function(V)
+    v = ufl.TestFunction(V)
+    uh = ufl.TrialFunction(V)
+
+    # Initialize the solution to avoid convergence issues
+    with u.vector.localForm() as loc:
+        loc.set(1.0)
+
+    # Initialization problem to get good initial guess
+    a = ufl.dot(ufl.grad(uh), ufl.grad(v)) * ufl.dx
+    L = f*v*ufl.dx
+    problem = fem.petsc.LinearProblem(a, L, bcs=[bc],
+                                      petsc_options={"ksp_type": "preonly",
+                                                     "pc_type": "lu"})
+    u = problem.solve()
+
+    F = ufl.sqrt(ufl.inner(ufl.grad(u), ufl.grad(u)))*v*ufl.dx - f*v*ufl.dx
+    F += eps * ufl.inner(ufl.grad(abs(u)), ufl.grad(v)) * ufl.dx
+    # Jacobian of F
+    J = ufl.derivative(F, u, ufl.TrialFunction(V))
+
+    # Create nonlinear problem and solver
+    problem = fem.petsc.NonlinearProblem(F, u, bcs=[bc], J=J)
+    solver = NewtonSolver(MPI.COMM_WORLD, problem)
+
+    # Set solver options
+    solver.rtol = 1e-6
+    solver.report = True
+    # can turn this off
+    log.set_log_level(log.LogLevel.INFO)
+
+    solver.solve(u)
+
+
 
 
     if distance is True:
@@ -118,6 +152,8 @@ def solve_eikonal(domain, ft, distance: bool, c=1,
         rescaled_values = new_min + (dis_values - min_val) * (new_max - new_min) / (max_val - min_val)
         u = fem.Function(V)
         u.x.array[:] = rescaled_values
+
+
 
     return u
 
