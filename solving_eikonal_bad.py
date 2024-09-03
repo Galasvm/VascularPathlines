@@ -1,12 +1,12 @@
-
 import yaml
 import os
 from centerlines import *
 import time
 
+
 time_start = time.time()
 
-yaml_file = "0100_A_AO_COA_finer.yaml"
+yaml_file = "cylinder.yaml"
 
 # Determine parent folder
 parent = os.path.dirname(__file__)
@@ -44,12 +44,11 @@ if params["just_distance"] is False:
 
 gradient_soln, gradient_array = gradient_distance(domain, solution)
 
-centerline_polydata = centerlines(domain, cluster_separate, extreme, rescale_dis, gradient_array)
+centerline_polydata, centerline_all_points = centerlines(domain, cluster_separate, extreme, rescale_dis, gradient_array)
 
-if params["save_clustermap"] is True:
-    export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_map.xdmf", domain, cluster_graph)
-    export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_separate.xdmf", domain, cluster_separate)
 
+
+# Checking if the solution should be saved
 if params["save_eikonal"] is True:
     export_soln(save_dir + "/eikonal" + yaml_file_name + "_distance_field.xdmf", domain, dis)
     export_soln(save_dir + "/eikonal" + yaml_file_name + "_rescaled_distance_field.xdmf", domain, rescale_dis)
@@ -57,13 +56,22 @@ if params["save_eikonal"] is True:
         export_soln(save_dir + "/eikonal" + yaml_file_name + "_destination_time.xdmf", domain, solution)
         export_soln(save_dir + "/eikonal" + yaml_file_name + "_grad_soln.xdmf", domain, gradient_soln)
 
-save_centerline_vtk(centerline_polydata, save_dir + "/cluster" + yaml_file_name + "_centerline.vtp")
+if params["save_clustermap"] is True:
+    export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_map.xdmf", domain, cluster_graph)
+    export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_separate.xdmf", domain, cluster_separate)
+
+if params["save_centerline"] is True:
+    if nodes_center is True:
+        save_centerline_vtk(centerline_polydata, save_dir + "/cluster/centerline" + yaml_file_name + "_nodeextraction_centerline.vtp")
+        #save_centerline_vtk(smooth_centerline, save_dir + "/cluster/centerline" + yaml_file_name + "_nodeextraction_smooth_centerline.vtp")
+    else:
+        save_centerline_vtk(centerline_polydata, save_dir + "/cluster/centerline" + yaml_file_name + "_centerline.vtp")
+        #save_centerline_vtk(smooth_centerline, save_dir + "/cluster/centerline" + yaml_file_name + "_smooth_centerline.vtp")       
 
 with open(save_dir + "/cluster" + yaml_file_name + "_extreme_nodes.txt", "w") as file:
     file.write(f"there are {len(extreme)} extreme nodes: {extreme}")
     file.close()
 
- 
 print(f"Time to run the entire code: {time.time() - time_start:0.2f}")
 
 with open(save_dir + yaml_file_name + "_execution_time.txt", "w") as file:

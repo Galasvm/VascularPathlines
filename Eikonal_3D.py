@@ -8,6 +8,10 @@ from dolfinx.io import XDMFFile
 import ufl
 import yaml
 import os
+from scipy.spatial import cKDTree
+from scipy.sparse.csgraph import connected_components
+from scipy.sparse import csr_matrix
+import vtk
 
 # Call the yaml file you want to use
 yaml_file = "demomesh.yaml"
@@ -92,68 +96,20 @@ def solve_eikonal(domain, ft, distance: bool, c=1,
 
         # alpha is related to the smallest vessel diameter
 
-        alpha = 1/max_distance_outlet
+        alpha = 100
         print(f"alpha: {alpha}")
 
         # now we set the wave speed proportional to the minimum distance field
         f = 1/(2**(alpha*c))
 
-
     # CALCULATING EPS: We need to make eps related to the mesh size
     # finding the max cell size now
-    hmax = h_max(domain)
+    hmax, hmin = h_max(domain)
     print(f"max cell size: {hmax}")
     eps = hmax/2
     print(f"eps: {eps}")
 
-    u = fem.Function(V)
-    v = ufl.TestFunction(V)
-    uh = ufl.TrialFunction(V)
-
-    # Initialize the solution to avoid convergence issues
-    with u.vector.localForm() as loc:
-        loc.set(1.0)
-
-    # Initialization problem to get good initial guess
-    a = ufl.dot(ufl.grad(uh), ufl.grad(v)) * ufl.dx
-    L = f*v*ufl.dx
-    problem = fem.petsc.LinearProblem(a, L, bcs=[bc],
-                                      petsc_options={"ksp_type": "preonly",
-                                                     "pc_type": "lu"})
-    u = problem.solve()
-
-    F = ufl.sqrt(ufl.inner(ufl.grad(u), ufl.grad(u)))*v*ufl.dx - f*v*ufl.dx
-    F += eps * ufl.inner(ufl.grad(abs(u)), ufl.grad(v)) * ufl.dx
-    # Jacobian of F
-    J = ufl.derivative(F, u, ufl.TrialFunction(V))
-
-    # Create nonlinear problem and solver
-    problem = fem.petsc.NonlinearProblem(F, u, bcs=[bc], J=J)
-    solver = NewtonSolver(MPI.COMM_WORLD, problem)
-
-    # Set solver options
-    solver.rtol = 1e-6
-    solver.report = True
-    # can turn this off
-    log.set_log_level(log.LogLevel.INFO)
-
-    solver.solve(u)
-
-
-
-
-    if distance is True:
-        # here we want to reescale the distance field
-        dis_values = u.x.array
-        min_val = dis_values.min()
-        max_val = dis_values.max()
-        new_min = 0.01
-        new_max = 1.0
-        rescaled_values = new_min + (dis_values - min_val) * (new_max - new_min) / (max_val - min_val)
-        u = fem.Function(V)
-        u.x.array[:] = rescaled_values
-
-
+    u = set_problem(V, bc, eps, f)
 
     return u
 
@@ -176,7 +132,8 @@ def h_max(domain):
     h = dolfinx.cpp.mesh.h(domain, domain.topology.dim, cells)
     # finding the max cell size now
     h_max = max(h)
-    return h_max
+    h_min = min(h)
+    return h_max, h_min
 
 
 def set_problem(funcspace, boundary, epsilon, f):
@@ -209,10 +166,207 @@ def set_problem(funcspace, boundary, epsilon, f):
     solver.rtol = 1e-6
     solver.report = True
     # can turn this off
-    log.set_log_level(log.LogLevel.INFO)
+    #log.set_log_level(log.LogLevel.INFO)
 
     solver.solve(u)
+
     return u
+
+
+def cluster_map(seg, mesh, num_clusters=25):
+    values = seg.x.array
+    print(f"this is how many nodes there are: {len(values)}")
+    sorted_indices = np.argsort(values)
+    # Determine the number of clusters needed
+    num_points_per_cluster = len(values) // num_clusters
+    print(f"number of points per clusters: {num_points_per_cluster}")
+
+    # Initialize the clustered values
+    clustered_values = np.zeros_like(values, dtype=int)
+
+    # Assign cluster labels
+    for i in range(num_clusters):
+        start_idx = i * num_points_per_cluster
+        end_idx = start_idx + num_points_per_cluster
+
+        # Ensure we don't exceed the array bounds
+        if i == num_clusters - 1:
+            end_idx = len(values)
+
+        clustered_values[sorted_indices[start_idx:end_idx]] = i
+
+    # If there are leftover points that don't fit into a full cluster, assign them to the last cluster
+    if end_idx < len(values):
+        clustered_values[sorted_indices[end_idx:]] = num_clusters
+
+    V = functionspace(mesh, ("Lagrange", 1))
+    u = fem.Function(V)
+
+    # Assign the clustered values back to the array
+    u.x.array[:] = clustered_values
+    return u
+
+
+def separate_clusters(mesh, clustersmap):
+    coordinates = mesh.geometry.x
+    num_clusters = int(np.max(clustersmap.x.array)) + 1
+
+    dis_max, dis_min = h_max(mesh)
+    distance_threshold = dis_max * 0.8
+    print(f"distance threshold: {distance_threshold}")
+    print(f"min distance: {dis_min} and max distance: {dis_max}")
+
+    new_clusters = clustersmap.x.array.copy()
+    next_cluster_id = num_clusters
+    components = {}
+
+    # Step 1: Separate clusters
+    for cluster_id in range(num_clusters):
+        # Get the indices of nodes in the current cluster
+        cluster_indices = np.where(clustersmap.x.array == cluster_id)[0]
+        cluster_coords = coordinates[cluster_indices]
+
+        if len(cluster_indices) < 2:  # Skip clusters too small to split
+            continue
+
+        # Build a k-d tree for the cluster nodes to find close neighbors
+        tree = cKDTree(cluster_coords)
+
+        # Find pairs of nodes that are close to each other
+        pairs = tree.query_pairs(r=distance_threshold)
+
+        # Create a graph where each node is connected to its neighbors
+        num_nodes = len(cluster_indices)
+        graph = csr_matrix((np.ones(len(pairs)), (list(zip(*pairs))[0], list(zip(*pairs))[1])),
+                           shape=(num_nodes, num_nodes))
+
+        # Find connected components in the graph
+        n_components, labels = connected_components(csgraph=graph, directed=False)
+        components[cluster_id] = n_components
+
+        # If there is more than one connected component, separate them into new clusters
+        if n_components > 1:
+            for i in range(n_components):
+                component_indices = cluster_indices[labels == i]
+
+                if i == 0:
+                    # Keep the first component in the original cluster
+                    new_clusters[component_indices] = cluster_id
+                else:
+                    # Assign a new cluster ID to the second component
+                    new_clusters[component_indices] = next_cluster_id
+                    next_cluster_id += 1
+        
+    print(f"connected components list: {components}")
+    # Step 2: Handle small clusters by merging into nearby larger clusters
+    separated_num_clusters = int(np.max(new_clusters)) + 1
+    tree = cKDTree(coordinates)  # Global k-d tree
+
+    for cluster_id in range(separated_num_clusters):
+        # Get the indices of nodes in the current cluster
+        cluster_indices = np.where(new_clusters == cluster_id)[0]
+
+        if len(cluster_indices) < 50:  # If the cluster is too small, merge it
+            cluster_coords = coordinates[cluster_indices]
+            _, nearest_neighbor_indices = tree.query(cluster_coords, k=2)
+
+            # Get the cluster IDs of these nearest neighbors
+            nearest_cluster_ids = new_clusters[nearest_neighbor_indices[:, 1]]
+            nearest_cluster_ids = nearest_cluster_ids.astype(int)
+            nearest_cluster_ids = nearest_cluster_ids[nearest_cluster_ids != cluster_id]
+
+            if len(nearest_cluster_ids) > 0:
+                # Find the most common nearest cluster ID to merge into
+                merge_target = np.bincount(nearest_cluster_ids).argmax()
+                # Merge the small cluster into the selected nearby cluster
+                new_clusters[cluster_indices] = merge_target
+
+    # Step 3: Identify and remove empty clusters
+    unique, counts = np.unique(new_clusters, return_counts=True)
+    empty_clusters = unique[counts == 0]
+
+    for empty_cluster in empty_clusters:
+        # Find nodes that were assigned to the empty cluster
+        empty_nodes = np.where(new_clusters == empty_cluster)[0]
+
+        if len(empty_nodes) > 0:
+            # Reassign these nodes to a nearby non-empty cluster
+            _, nearest_indices = tree.query(coordinates[empty_nodes], k=1)
+            nearest_cluster_ids = new_clusters[nearest_indices]
+            nearest_cluster_ids = nearest_cluster_ids[nearest_cluster_ids != empty_cluster]
+
+            if len(nearest_cluster_ids) > 0:
+                merge_target = np.bincount(nearest_cluster_ids.astype(int)).argmax()
+                new_clusters[empty_nodes] = merge_target
+
+    # Step 4: Reassign cluster IDs to ensure consecutive numbering
+    unique_clusters = np.unique(new_clusters)
+    cluster_mapping = {old_id: new_id for new_id, old_id in enumerate(unique_clusters)}
+
+    new_clusters = np.array([cluster_mapping[old_id] for old_id in new_clusters])
+
+    # Step 5: Identify end clusters based on the updated cluster information
+    separated_num_clusters = int(np.max(new_clusters)) + 1
+    cluster_neighbors = {cluster_id: set() for cluster_id in range(separated_num_clusters)}
+
+    for cluster_id in range(separated_num_clusters):
+        cluster_indices = np.where(new_clusters == cluster_id)[0]
+        cluster_coords = coordinates[cluster_indices]
+
+        if len(cluster_indices) < 2:  # Skip clusters too small to analyze
+            continue
+
+        for idx in cluster_indices:
+            neighbors = tree.query_ball_point(coordinates[idx], distance_threshold)
+            for neighbor_idx in neighbors:
+                neighbor_cluster_id = new_clusters[neighbor_idx]
+                if neighbor_cluster_id != cluster_id:
+                    cluster_neighbors[cluster_id].add(neighbor_cluster_id)
+
+    extreme_clusters_array = [cluster_id for cluster_id, neighbors in cluster_neighbors.items() if len(neighbors) < 2]
+
+    # Create a new dolfinx function to hold the final clusters
+    V = functionspace(mesh, ("Lagrange", 1))
+    u = fem.Function(V)
+    u.x.array[:] = new_clusters
+    u.x.scatter_forward()
+
+    return u, extreme_clusters_array
+
+
+def gradient_distance(mesh, time_distance_map):
+
+    # Compute the symbolic gradient of the solution u
+    grad_u = ufl.grad(time_distance_map)
+
+    # Define a vector function space for the gradient (e.g., Lagrange element of degree 1)
+    W = functionspace(mesh, ("Lagrange", 1, (3, )))
+
+    # Define the trial and test functions for the projection problem
+    w = ufl.TrialFunction(W)
+    v = ufl.TestFunction(W)
+
+    # Set up the variational problem to project the gradient
+    a = ufl.inner(w, v) * ufl.dx
+    L = ufl.inner(grad_u, v) * ufl.dx
+
+    # Solve the projection problem
+    w = fem.Function(W)
+    problem = fem.petsc.LinearProblem(a, L, u=w,
+                                      petsc_options={"ksp_type": "preonly",
+                                                     "pc_type": "lu"})
+    problem.solve()
+
+    x_comp = w.x.array.reshape(-1, 3)[:, 0]  # x component
+    y_comp = w.x.array.reshape(-1, 3)[:, 1]  # y component
+    z_comp = w.x.array.reshape(-1, 3)[:, 2]
+
+    # Combine into a single NumPy array
+    gradient_array = np.vstack((x_comp, y_comp, z_comp)).T
+
+    grad_magnitude_array = np.sqrt(x_comp**2 + y_comp**2 + z_comp**2)
+
+    return w, gradient_array, grad_magnitude_array
 
 
 def import_mesh(path_mesh, path_facets):
@@ -227,12 +381,12 @@ def import_mesh(path_mesh, path_facets):
     return domain_, facet_
 
 
-def export_soln(path_export, mesh_, function_):
+def export_soln(path_export, mesh, function):
 
     # Save the solution in XDMF format for visualization
     with XDMFFile(MPI.COMM_WORLD, path_export, "w") as file:
-        file.write_mesh(mesh_)
-        file.write_function(function_)
+        file.write_mesh(mesh)
+        file.write_function(function)
 
 
 domain, facet = import_mesh(mesh_dir + ".xdmf",
@@ -247,14 +401,22 @@ if params["multiple_wall_tag"] is True:
 else:
     dis = solve_eikonal(domain, facet, True, 1, 0, params["wall_face_tag"])
 
-# Checking if only solving for the distance
-if params["just_distance"] is False:
-    solution = solve_eikonal(domain, facet, False, dis,
-                             params["outlet_face_tag"],
-                             params["inlet_face_tag"])
+clustering_destination_time_map = solve_eikonal(domain, facet, True, 1, 0, params["inlet_face_tag"])
+cluster_graph = cluster_map(clustering_destination_time_map, domain)
+cluster_separate, extreme = separate_clusters(domain, cluster_graph)
+
 
 # Checking if the solution should be saved
 if params["save_eikonal"] is True:
-    export_soln(save_dir + "_distance_field.xdmf", domain, dis)
-    if params["just_distance"] is False:
-        export_soln(save_dir + "_final_soln.xdmf", domain, solution)
+    export_soln(save_dir + "/eikonal" + yaml_file_name + "_distance_field.xdmf", domain, dis)
+    #if params["just_distance"] is False:
+        #export_soln(save_dir + "/eikonal" + yaml_file_name + "_final_soln.xdmf", domain, solution)
+
+
+if params["save_clustermap"] is True:
+
+    export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_map.xdmf", domain, cluster_graph)
+    export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_separate.xdmf", domain, cluster_separate)
+
+
+

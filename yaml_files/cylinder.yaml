@@ -2,7 +2,7 @@
 
 #parameters
 file_name: /cylinder
-saving_dir: /results/08292024/down_gradient/combined
+saving_dir: /results/09032024/error_trials
 # if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
 multiple_wall_tag: False
@@ -12,11 +12,14 @@ wall_face_tag: 1
 wall_face_tag_2: # this is always one more than you need
 
 inlet_face_tag: 2 # this is the exact inlet facetag number
-outlet_face_tag: 3 # this is the outlet facetag number to use for evaluation of speed
 
 num_clusters: 20
-# what to run
+# what to run & save
 
-just_distance: false
+just_distance: False
 save_eikonal: true
-save_clustermap: true
+save_clustermap: True
+save_centerline: True
+
+
+
