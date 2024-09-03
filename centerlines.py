@@ -12,8 +12,7 @@ from scipy.sparse import csr_matrix
 import vtk
 
 
-def solve_eikonal(domain, ft, distance: bool, c=1,
-                  outlet_face_tag=0, *face_tag: int):
+def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
     V = functionspace(domain, ("Lagrange", 1))
     domain.topology.create_connectivity(domain.topology.dim - 1,
                                         domain.topology.dim)
@@ -58,33 +57,8 @@ def solve_eikonal(domain, ft, distance: bool, c=1,
         # define the dirichlet boundary condition at one point
         bc = fem.dirichletbc(default_scalar_type(0), inlet_dof, V)
 
-        # CALCULATING ALPHA
-        # now we need to calculate alpha for the wave speed, which is related
-        # to a small vessel diameter in the geometry (a face outlet
-        # selected by the user)
-
-        # first we find the dofs of the outlet selected
-        outlet = ft.find(outlet_face_tag)
-        outlet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
-                                                  outlet)
-        # then we find the node with the highest minimum distance from the
-        # walls (the center) for the outlet. We also print out the highest
-        # minimum distance from the walls for the inlet
-        c_values = c.vector.array
-        selected_values_out = c_values[outlet_dofs]
-        selected_values_in = c_values[inlet_dofs]
-        max_distance_outlet = selected_values_out.max()
-        max_distance_inlet = selected_values_in.max()
-        print(f"max_distance_outlet is: {max_distance_outlet}")
-        print(f"max_distance_inlet is: {max_distance_inlet}")
-
-        # alpha is related to the smallest vessel diameter
-
-        alpha = 1/max_distance_outlet
-        print(f"alpha: {alpha}")
-
         # now we set the wave speed proportional to the minimum distance field
-        f = 1/(2**(alpha*c))
+        f = 1/(2**(5*c))
 
     # CALCULATING EPS: We need to make eps related to the mesh size
     # finding the max cell size now
@@ -94,17 +68,6 @@ def solve_eikonal(domain, ft, distance: bool, c=1,
     print(f"eps: {eps}")
 
     u = set_problem(V, bc, eps, f)
-
-    if distance is True:
-        # here we want to reescale the distance field
-        dis_values = u.x.array
-        min_val = dis_values.min()
-        max_val = dis_values.max()
-        new_min = 0.01
-        new_max = 1.0
-        rescaled_values = new_min + (dis_values - min_val) * (new_max - new_min) / (max_val - min_val)
-        u = fem.Function(V)
-        u.x.array[:] = rescaled_values
 
     return u
 
@@ -199,7 +162,6 @@ def gradient_distance(mesh, time_distance_map):
     gradient_array = np.vstack((x_comp, y_comp, z_comp)).T
 
     return w, gradient_array
-
 
 def import_mesh(path_mesh, path_facets):
 
@@ -381,23 +343,148 @@ def separate_clusters(mesh, clustersmap):
 
     return u, end_clusters, new_clusters
 
+def rescale_distance_map(mesh, final_cluster_map, distance_map):
+    num_clusters = int(np.max(final_cluster_map.x.array)) + 1
+    distance_map_array = distance_map.x.array
+    rescaled_distance_map_array = np.zeros_like(distance_map_array)
+
+    for cluster_id in range(num_clusters):
+        cluster_indices = np.where(final_cluster_map.x.array == cluster_id)[0]
+        distance_values = distance_map_array[cluster_indices]
+        max_radii = distance_values.max()
+        rescaled_values = distance_values/max_radii
+        rescaled_distance_map_array[cluster_indices] = rescaled_values
+
+    V = functionspace(mesh, ("Lagrange", 1))
+    rescaled_distance_map = fem.Function(V)
+    rescaled_distance_map.x.array[:] = rescaled_distance_map_array
+
+    return rescaled_distance_map, rescaled_distance_map_array
+
 
 def find_nearest_node(point, coordinates):
-    """
-    Find the index of the nearest node to a given point.
-
-    Parameters:
-    - point: The point to search for (as a numpy array).
-    - coordinates: The coordinates of all nodes (as a numpy array).
-
-    Returns:
-    - The index of the nearest node.
-    """
     distances = np.linalg.norm(coordinates - point, axis=1)
     return np.argmin(distances)
 
 
-def trace_centerline_vtk(mesh, gradient_array, start_point, end_point, step_size=0.05, tolerance=0.1):
+from scipy.spatial import Delaunay
+
+
+def interpolate_gradient(gradient_array, point, coordinates):
+    """
+    Interpolate the gradient at a given point using barycentric interpolation.
+
+    Parameters:
+    - gradient_array: Array of gradient vectors at each node (shape should be (num_nodes, dim)).
+    - point: The point at which to interpolate the gradient (as a numpy array).
+    - coordinates: The coordinates of all nodes (as a numpy array).
+
+    Returns:
+    - interpolated_gradient: The interpolated gradient at the given point.
+    """
+    # Find the Delaunay triangulation of the coordinates
+    tri = Delaunay(coordinates)
+
+    # Find the simplex (triangle/tetrahedron) that contains the point
+    simplex = tri.find_simplex(point)
+
+    # Get the vertices of the simplex
+    vertices = tri.simplices[simplex]
+
+    # Get the coordinates and gradients of the vertices
+    vertex_coords = coordinates[vertices]
+    vertex_grads = gradient_array[vertices]
+
+    # Compute the barycentric coordinates of the point within the simplex
+    bary_coords = tri.transform[simplex, :3].dot(point - tri.transform[simplex, 3])
+    bary_coords = np.append(bary_coords, 1 - bary_coords.sum())
+
+    # Interpolate the gradient using barycentric coordinates
+    interpolated_gradient = np.dot(bary_coords, vertex_grads)
+    print(interpolated_gradient)
+
+    return interpolated_gradient
+
+
+def is_point_within_mesh(point, mesh_coordinates):
+    """
+    Check if the point is within the bounding box of the mesh.
+
+    Parameters:
+    - point: The point to check (as a numpy array).
+    - mesh_coordinates: The coordinates of all nodes in the mesh (as a numpy array).
+
+    Returns:
+    - within_bounds: Boolean indicating if the point is within the mesh bounds.
+    """
+    min_bounds = np.min(mesh_coordinates, axis=0)
+    max_bounds = np.max(mesh_coordinates, axis=0)
+
+    return np.all(point >= min_bounds) and np.all(point <= max_bounds)
+
+
+def trace_centerline_vtk(mesh, gradient_array, start_point, end_point, step_size=0.5, tolerance=1):
+    """
+    Trace a centerline from start_point to end_point by following the gradient of gradient_array,
+    and save the points in VTK format.
+
+    Parameters:
+    - gradient_array: Array of gradient vectors at each node (shape should be (num_nodes, dim)).
+    - start_point: The starting point of the centerline (as a numpy array).
+    - end_point: The ending point of the centerline (as a numpy array).
+    - coordinates: The coordinates of all nodes (as a numpy array).
+    - step_size: The size of the step taken along the gradient.
+    - tolerance: The tolerance for stopping the trace when close to the end_point.
+
+    Returns:
+    - centerline_polydata: vtkPolyData containing the centerline points and lines.
+    """
+    # Initialize the current point to the starting point
+    coordinates = mesh.geometry.x
+    current_point = np.array(start_point)
+
+    # Initialize vtk points and lines for the centerline
+    centerline_points = vtk.vtkPoints()
+    centerline_lines = vtk.vtkCellArray()
+
+    # Insert the starting point
+    previous_point_id = centerline_points.InsertNextPoint(current_point)
+
+    while np.linalg.norm(current_point - end_point) > tolerance:
+        # Interpolate the gradient at the current point
+        grad_at_point = interpolate_gradient(gradient_array, current_point, coordinates)
+
+        # Normalize the gradient to get the direction
+        direction = -grad_at_point / np.linalg.norm(grad_at_point)
+
+        # Take a step in the direction of the gradient
+        next_point = current_point + step_size * direction
+       
+        if not is_point_within_mesh(next_point, coordinates):
+            print("Next point is outside the mesh bounds, stopping trace.")
+            break
+        # Insert the new point
+        point_id = centerline_points.InsertNextPoint(next_point)
+
+        # Create a line between the previous and current point
+        line = vtk.vtkLine()
+        line.GetPointIds().SetId(0, previous_point_id)
+        line.GetPointIds().SetId(1, point_id)
+        centerline_lines.InsertNextCell(line)
+
+        # Update the current point and previous_point_id
+        current_point = next_point
+        previous_point_id = point_id
+
+    # Create vtkPolyData to hold the centerline points and lines
+    centerline_polydata = vtk.vtkPolyData()
+    centerline_polydata.SetPoints(centerline_points)
+    centerline_polydata.SetLines(centerline_lines)
+
+    return centerline_polydata, centerline_lines
+
+
+def trace_centerline_vtk_nodes(mesh, gradient_array, start_point, end_point, step_size=0.05, tolerance=0.5):
     """
     Trace a centerline from start_point to end_point by following the gradient of gradient_array,
     and save the points in VTK format.
@@ -477,9 +564,12 @@ def center_point_cluster(mesh, new_clustermap, cluster_number, distance_map):
     return max_dist_point
 
 
+nodes_center = False
+
 def centerlines(mesh, new_clustermap, extreme_nodes, distance_map, gradient_array):
     """
-    Trace centerlines from each extreme node to a common end point and combine them into one vtkPolyData.
+    Trace centerlines from each extreme node to a common end point and
+    combine them into one vtkPolyData.
 
     Parameters:
     - mesh: The mesh of the geometry.
@@ -490,26 +580,37 @@ def centerlines(mesh, new_clustermap, extreme_nodes, distance_map, gradient_arra
 
     Returns:
     - combined_centerline_polydata: vtkPolyData containing all the centerlines.
+    - combined_points_array: A NumPy array of the combined points (for smoothing).
     """
     # Initialize vtkPoints and vtkCellArray for the combined centerline
     combined_centerline_points = vtk.vtkPoints()
     combined_centerline_lines = vtk.vtkCellArray()
 
     point_offset = 0  # Offset to keep track of the point IDs across different centerlines
+    combined_points_list = []  # List to collect all points for smoothing
 
     # Find the common end point
     end_pt = center_point_cluster(mesh, new_clustermap, 0, distance_map)
-    print(end_pt)
+    hmax, hmin = h_max(mesh)
+
 
     for j in range(len(extreme_nodes)):
         current_cluster = extreme_nodes[j]
         if current_cluster != 0:
             start_pt = center_point_cluster(mesh, new_clustermap, current_cluster, distance_map)
-            vessel_points, vessel_lines = trace_centerline_vtk(mesh, gradient_array, start_pt, end_pt)
+            if nodes_center is False:
+                print("centerline estraction integrading gradient")
+                vessel_points, vessel_lines = trace_centerline_vtk(mesh, gradient_array, start_pt, end_pt, hmax, hmax*3)
+            else:
+                vessel_points, vessel_lines = trace_centerline_vtk_nodes(mesh, gradient_array, start_pt, end_pt, hmax, hmax*3)
+                print("centerline extraction following nodes")
+                
 
             # Append the vessel points and lines to the combined centerline
             for i in range(vessel_points.GetNumberOfPoints()):
-                combined_centerline_points.InsertNextPoint(vessel_points.GetPoint(i))
+                point = vessel_points.GetPoint(i)
+                combined_centerline_points.InsertNextPoint(point)
+                combined_points_list.append(point)  # Collect the point for smoothing
 
             vessel_lines.InitTraversal()
             id_list = vtk.vtkIdList()
@@ -519,7 +620,7 @@ def centerlines(mesh, new_clustermap, extreme_nodes, distance_map, gradient_arra
                 line.GetPointIds().SetId(0, id_list.GetId(0) + point_offset)
                 line.GetPointIds().SetId(1, id_list.GetId(1) + point_offset)
                 combined_centerline_lines.InsertNextCell(line)
-            
+
             # Update the point offset for the next centerline
             point_offset += vessel_points.GetNumberOfPoints()
 
@@ -528,7 +629,54 @@ def centerlines(mesh, new_clustermap, extreme_nodes, distance_map, gradient_arra
     combined_centerline_polydata.SetPoints(combined_centerline_points)
     combined_centerline_polydata.SetLines(combined_centerline_lines)
 
+    # Convert the combined points list to a NumPy array
+    combined_points_array = np.array(combined_points_list)
+
     return combined_centerline_polydata
+
+
+def post_process_centerline(centerline):
+    """
+    Function to post process the centerline using vtk functionalities.
+    
+    1. Remove duplicate points.
+    2. Smooth centerline.
+
+    Parameters
+    ----------
+    centerline : vtkPolyData
+        Centerline of the vessel.
+
+    Returns
+    -------
+    centerline : vtkPolyData
+    """
+    print(f"""Number of points before post processing:
+          {centerline.GetNumberOfPoints()}""")
+    # Remove duplicate points
+    cleaner = vtk.vtkCleanPolyData()
+    cleaner.SetInputData(centerline)
+    cleaner.SetTolerance(0.01)
+    cleaner.Update()
+    centerline = cleaner.GetOutput()
+
+    # Smooth centerline
+    smoother = vtk.vtkWindowedSincPolyDataFilter()
+    smoother.SetInputData(centerline)
+    smoother.SetNumberOfIterations(15)
+    smoother.BoundarySmoothingOff()
+    smoother.FeatureEdgeSmoothingOff()
+    smoother.SetFeatureAngle(120.0)
+    smoother.SetPassBand(0.001)
+    smoother.NonManifoldSmoothingOn()
+    smoother.NormalizeCoordinatesOn()
+    smoother.Update()
+    centerline = smoother.GetOutput()
+
+    print(f"""Number of points after post processing:
+          {centerline.GetNumberOfPoints()}""")
+
+    return centerline
 
 
 def save_centerline_vtk(centerline_polydata, filename):
