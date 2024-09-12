@@ -10,6 +10,7 @@ from scipy.spatial import cKDTree
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse import csr_matrix
 import vtk
+import os
 
 
 def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
@@ -63,7 +64,7 @@ def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
     # CALCULATING EPS: We need to make eps related to the mesh size
     # finding the max cell size now
     hmax, hmin = h_max(domain)
-    print(f"max cell size: {hmax}")
+    print(f"min edge size: {hmin} and max edge size: {hmax}")
     eps = hmax/2
     print(f"eps: {eps}")
 
@@ -124,7 +125,7 @@ def set_problem(funcspace, boundary, epsilon, f):
     solver.rtol = 1e-6
     solver.report = True
     # can turn this off
-    #log.set_log_level(log.LogLevel.INFO)
+    log.set_log_level(log.LogLevel.INFO)
 
     solver.solve(u)
 
@@ -392,7 +393,7 @@ def interpolate_gradient(gradient_array, point, coordinates):
     vertices = tri.simplices[simplex]
 
     # Get the coordinates and gradients of the vertices
-    vertex_coords = coordinates[vertices]
+    #vertex_coords = coordinates[vertices]
     vertex_grads = gradient_array[vertices]
 
     # Compute the barycentric coordinates of the point within the simplex
@@ -564,46 +565,31 @@ def center_point_cluster(mesh, new_clustermap, cluster_number, distance_map):
     return max_dist_point
 
 
-nodes_center = False
+def centerlines(mesh, new_clustermap, extreme_nodes, distance_map, gradient_array, centerline_nodes=bool):
 
-def centerlines(mesh, new_clustermap, extreme_nodes, distance_map, gradient_array):
-    """
-    Trace centerlines from each extreme node to a common end point and
-    combine them into one vtkPolyData.
 
-    Parameters:
-    - mesh: The mesh of the geometry.
-    - new_clustermap: The function that maps the nodes to clusters.
-    - extreme_nodes: The list of extreme nodes to start the centerlines from.
-    - distance_map: The function with the distance of each node to the boundaries.
-    - gradient_array: Array of gradient vectors at each node.
-
-    Returns:
-    - combined_centerline_polydata: vtkPolyData containing all the centerlines.
-    - combined_points_array: A NumPy array of the combined points (for smoothing).
-    """
     # Initialize vtkPoints and vtkCellArray for the combined centerline
     combined_centerline_points = vtk.vtkPoints()
     combined_centerline_lines = vtk.vtkCellArray()
 
     point_offset = 0  # Offset to keep track of the point IDs across different centerlines
-    combined_points_list = []  # List to collect all points for smoothing
+    combined_points_list = []  # List to collect all points in an array
 
     # Find the common end point
     end_pt = center_point_cluster(mesh, new_clustermap, 0, distance_map)
-    hmax, hmin = h_max(mesh)
+    hmax, _ = h_max(mesh)
 
 
     for j in range(len(extreme_nodes)):
         current_cluster = extreme_nodes[j]
         if current_cluster != 0:
             start_pt = center_point_cluster(mesh, new_clustermap, current_cluster, distance_map)
-            if nodes_center is False:
-                print("centerline estraction integrading gradient")
+            if centerline_nodes is False:
+                print("centerline extraction integrading gradient")
                 vessel_points, vessel_lines = trace_centerline_vtk(mesh, gradient_array, start_pt, end_pt, hmax, hmax*3)
             else:
                 vessel_points, vessel_lines = trace_centerline_vtk_nodes(mesh, gradient_array, start_pt, end_pt, hmax, hmax*3)
-                print("centerline extraction following nodes")
+                print("extracting centerline based on nodes")
                 
 
             # Append the vessel points and lines to the combined centerline
@@ -687,6 +673,10 @@ def save_centerline_vtk(centerline_polydata, filename):
     - centerline_polydata: vtkPolyData containing the centerline points and lines.
     - filename: The name of the output VTK file.
     """
+    directory = os.path.dirname(filename)
+    if directory and not os.path.exists(directory):
+        os.makedirs(directory)
+    
     writer = vtk.vtkXMLPolyDataWriter()
     writer.SetFileName(filename)
     writer.SetInputData(centerline_polydata)

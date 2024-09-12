@@ -6,7 +6,7 @@ import time
 
 time_start = time.time()
 
-yaml_file = "0100_A_AO_COA_finer.yaml"
+yaml_file = "0103_H_PULM_H_finer.yaml"
 
 # Determine parent folder
 parent = os.path.dirname(__file__)
@@ -31,41 +31,63 @@ if params["multiple_wall_tag"] is True:
 else:
     dis = solve_eikonal(domain, facet, True, 1, params["wall_face_tag"])
 
-clustering_destination_time_map = solve_eikonal(domain, facet, True, 1, 0, params["inlet_face_tag"])
-cluster_graph = cluster_map(clustering_destination_time_map, domain)
-cluster_separate, extreme, cluster_separate_array = separate_clusters(domain, cluster_graph)
-print(f"there are {len(extreme)} extreme nodes: {extreme}")
-
-rescale_dis, rescale_dis_array = rescale_distance_map(domain, cluster_separate, dis)
+if params["cluster"] is True:
+    clustering_destination_time_map = solve_eikonal(domain, facet, True, 1, 0, params["inlet_face_tag"])
+    cluster_graph = cluster_map(clustering_destination_time_map, domain, params["num_clusters"])
+    cluster_separate, extreme, cluster_separate_array = separate_clusters(domain, cluster_graph)
+    print(f"there are {len(extreme)} extreme nodes: {extreme}")
+    if params["just_distance"] is False:
+        rescale_dis, rescale_dis_array = rescale_distance_map(domain, cluster_separate, dis)
 
 if params["just_distance"] is False:
     solution = solve_eikonal(domain, facet, False, rescale_dis,
                              params["inlet_face_tag"])
+    gradient_soln, gradient_array = gradient_distance(domain, solution)
 
-gradient_soln, gradient_array = gradient_distance(domain, solution)
+    if params["centerlines"] is True:
+        centerline_polydata = centerlines(domain, cluster_separate, extreme, rescale_dis, gradient_array, params["centerline_node"])
+        smooth_centerline_polydata = post_process_centerline(centerline_polydata)
 
-centerline_polydata = centerlines(domain, cluster_separate, extreme, rescale_dis, gradient_array)
-
-if params["save_clustermap"] is True:
+if params["cluster"] is True:
     export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_map.xdmf", domain, cluster_graph)
     export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_separate.xdmf", domain, cluster_separate)
 
 if params["save_eikonal"] is True:
     export_soln(save_dir + "/eikonal" + yaml_file_name + "_distance_field.xdmf", domain, dis)
-    export_soln(save_dir + "/eikonal" + yaml_file_name + "_rescaled_distance_field.xdmf", domain, rescale_dis)
+    if params["cluster"] is True:
+        export_soln(save_dir + "/eikonal" + yaml_file_name + "_rescaled_distance_field.xdmf", domain, rescale_dis)
+        export_soln(save_dir + "/eikonal" + yaml_file_name + "_clustering_destination_time.xdmf", domain, clustering_destination_time_map)
     if params["just_distance"] is False:
         export_soln(save_dir + "/eikonal" + yaml_file_name + "_destination_time.xdmf", domain, solution)
         export_soln(save_dir + "/eikonal" + yaml_file_name + "_grad_soln.xdmf", domain, gradient_soln)
 
-save_centerline_vtk(centerline_polydata, save_dir + "/cluster" + yaml_file_name + "_centerline.vtp")
+if params["just_distance"] is False:
+    if params["centerlines"] is True:
+        
+        if params["centerline_node"] is True:
+            # this one is for nodes
+            save_centerline_vtk(centerline_polydata, save_dir + "/cluster" + yaml_file_name + "_nodes_centerline.vtp")
+            save_centerline_vtk(smooth_centerline_polydata, save_dir + "/cluster" + yaml_file_name + "_smooth_nodes_centerline.vtp")
+        else:
+            # this one is for not nodes
+            save_centerline_vtk(centerline_polydata, save_dir + "/cluster" + yaml_file_name + "_centerline.vtp")
+            save_centerline_vtk(smooth_centerline_polydata, save_dir + "/cluster" + yaml_file_name + "_smooth_centerline.vtp")
 
-with open(save_dir + "/cluster" + yaml_file_name + "_extreme_nodes.txt", "w") as file:
-    file.write(f"there are {len(extreme)} extreme nodes: {extreme}")
-    file.close()
+if params["cluster"] is True:
+    with open(save_dir + "/cluster" + yaml_file_name + "_extreme_nodes.txt", "w") as file:
+        file.write(f"there are {len(extreme)} extreme nodes: {extreme}")
+        file.close()
 
- 
 print(f"Time to run the entire code: {time.time() - time_start:0.2f}")
+if params["centerline_node"] is True:
+    with open(save_dir + yaml_file_name + "_nodes_execution_time.txt", "w") as file:
+        file.write(f"Time to run the entire code: {time.time() - time_start:0.2f}")
+        file.close()
+else:
+    with open(save_dir + yaml_file_name + "_no_nodes_execution_time.txt", "w") as file:
+        file.write(f"Time to run the entire code: {time.time() - time_start:0.2f}")
+        file.close()
 
-with open(save_dir + yaml_file_name + "_execution_time.txt", "w") as file:
-    file.write(f"Time to run the entire code: {time.time() - time_start:0.2f}")
-    file.close()
+
+
+
