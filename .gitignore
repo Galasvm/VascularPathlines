@@ -1,8 +1,19 @@
 /results
 /Meshes
+/centerlines
+/bryan_merging.py
+/vtk_streamline.py
+/postprocessing_centerline.py
 /yaml_files/0103_H_PULM_H_coarse.yaml
 /yaml_files/0168_H_PULMFON_SVD_coarse.yaml
 /yaml_files/0100_A_AO_COA_finer.yaml
 /yaml_files/0073_H_CORO_H_coarse.yaml
 /yaml_files/0073_H_CORO_H_radmesh.yaml
+/yaml_files/0029_H_ABAO_H.yaml
+yaml_files/0086_H_PULM_PAH_finer.yaml
+yaml_files/0086_H_PULM_PAH.yaml
+yaml_files/0103_H_PULM_H_finer.yaml
+yaml_files/0082_H_PULM_H.yaml
+
+
 

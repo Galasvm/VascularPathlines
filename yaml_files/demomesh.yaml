@@ -2,7 +2,7 @@
 
 #parameters
 file_name: /demomesh
-saving_dir: /results/09122024
+saving_dir: /results/10302024/clustering_trials/all_together
 
 # if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
@@ -20,5 +20,5 @@ num_clusters: 25
 just_distance: False
 cluster: True
 centerlines: True
-centerline_node: True
+centerline_node: False
 save_eikonal: True
