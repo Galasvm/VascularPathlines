@@ -6,76 +6,149 @@ from dolfinx.nls.petsc import NewtonSolver
 from mpi4py import MPI
 from dolfinx.io import XDMFFile, VTKFile
 import ufl
-from scipy.spatial import cKDTree, Delaunay
+from scipy.spatial import cKDTree
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse import csr_matrix
 import vtk
 import os
 
+def import_mesh(path_mesh, path_facets):
 
-def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
+    with XDMFFile(MPI.COMM_WORLD, path_mesh, "r") as xdmf:
+        domain_ = xdmf.read_mesh(name="Grid")
+    domain_.topology.create_connectivity(domain_.topology.dim,
+                                         domain_.topology.dim - 1)
+
+    with XDMFFile(MPI.COMM_WORLD, path_facets, "r") as xdmf:
+        facet_ = xdmf.read_meshtags(domain_, name="Grid")
+    return domain_, facet_
+
+
+def export_soln(path_export, mesh, function):
+
+    # Save the solution in XDMF format for visualization
+    with XDMFFile(MPI.COMM_WORLD, path_export, "w") as file:
+        file.write_mesh(mesh)
+        file.write_function(function)
+
+# export as vtu
+def export_vtk(path_export, function):
+    vtkfile = VTKFile(MPI.COMM_WORLD, path_export, "w")
+    vtkfile.write_function(function)
+
+
+def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
     V = functionspace(domain, ("Lagrange", 1))
     domain.topology.create_connectivity(domain.topology.dim - 1,
                                         domain.topology.dim)
+    
     boundary_facets = dolfinx.cpp.mesh.exterior_facet_indices(domain.topology)
-    # putting all the dofs of the faces we want to select for the boundary
-    # condition
-    face_tags = list(face_tag)
-    count_face_tags = len(face_tags)
+    boundary_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,boundary_facets)
 
-    # seeing if there is more than one face selected
-    if count_face_tags > 1:
-        if distance is False:
-            print("error: Should only select one face" +
-                  "when solving solving with a seedpoint")
-            exit()
 
-    all = np.array([])
-    for tag in face_tags:
-        face = ft.find(tag)
-        all = np.append(all, face)
+    if boundary_type == 1:
+        bc = fem.dirichletbc(default_scalar_type(0), boundary_dofs, V)
+    elif boundary_type == 2:
+        if ps_index == 1:
+            dis_values = distance.x.array
+            ps_index=np.argmax(dis_values)
+        ps_index_array = np.array([ps_index], dtype=np.int32)
 
-    # Preparing parameters based on what field is being solved
-    if distance is True:
-
-        # setting the wall of the vessel as the boundary condition
-
-        wall_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
-                                                all) #GALA CHANGED THIS FROM ALL TO BOUNDARY FACETS %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        bc = fem.dirichletbc(default_scalar_type(0), wall_dofs, V)
-
-        # defining the speed as 1 since we are looking for the distance field
-        f = fem.Constant(domain, default_scalar_type(1))
+        # define the dirichlet boundary condition at one point
+        bc = fem.dirichletbc(default_scalar_type(0), ps_index_array, V)
+    elif boundary_type == 3:
+        filterted_bc_first =  np.append(distance, ps_index)
+        filterted_bc =  np.array(list(set(boundary_dofs) - set(filterted_bc_first)))
+        bc = fem.dirichletbc(default_scalar_type(0), filterted_bc, V)
 
     else:
+        print("error: no other boundary types")
+        exit()
 
-        inlet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
-                                                 all)
-
-        # now we need to find the dof at the center of the facet to select as
-        # the source point (the point with the greater distance from the walls)
-
-        inlet_dof = find_ps(c, inlet_dofs)
-        # define the dirichlet boundary condition at one point
-        bc = fem.dirichletbc(default_scalar_type(0), inlet_dof, V)
-
-        # now we set the wave speed proportional to the minimum distance field
-        f = 1/(2**(20*c))
-
+    # Preparing parameters based on what field is being solved
+    if f_type == 1:
+        f = fem.Constant(domain, default_scalar_type(1))
+    elif f_type == 2:
+        f = 2**distance
+    elif f_type == 3:
+        f = 1/(2**(20*distance))
+    
     # CALCULATING EPS: We need to make eps related to the mesh size
     # finding the max cell size now
-    hmax, hmin,_ = h_max(domain)
-    print(f"min edge size: {hmin} and max edge size: {hmax}")
+    hmax, hmin,_ = edge_max(domain)
+    # print(f"min edge size: {hmin} and max edge size: {hmax}")
     eps = hmax/2
     print(f"eps: {eps}")
 
     u = set_problem(V, bc, eps, f)
 
-    return u#, hmax
+    return u
+
+
+
+# def solve_eikonal(domain, ft, distance: bool, c=1, *face_tag: int):
+#     V = functionspace(domain, ("Lagrange", 1))
+#     domain.topology.create_connectivity(domain.topology.dim - 1,
+#                                         domain.topology.dim)
+    
+#     # putting all the dofs of the faces we want to select for the boundary
+#     # condition
+#     face_tags = list(face_tag)
+#     count_face_tags = len(face_tags)
+
+#     # seeing if there is more than one face selected
+#     if count_face_tags > 1:
+#         if distance is False:
+#             print("error: Should only select one face" +
+#                   "when solving solving with a seedpoint")
+#             exit()
+
+#     all = np.array([])
+#     for tag in face_tags:
+#         face = ft.find(tag)
+#         all = np.append(all, face)
+
+#     # Preparing parameters based on what field is being solved
+#     if distance is True:
+
+#         # setting the wall of the vessel as the boundary condition
+
+#         wall_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
+#                                                 all)
+#         bc = fem.dirichletbc(default_scalar_type(0), wall_dofs, V)
+
+#         # defining the speed as 1 since we are looking for the distance field
+#         f = fem.Constant(domain, default_scalar_type(1))
+
+#     else:
+
+#         inlet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
+#                                                  all)
+
+#         # now we need to find the dof at the center of the facet to select as
+#         # the source point (the point with the greater distance from the walls)
+
+#         inlet_dof = find_ps(c, inlet_dofs)
+#         # define the dirichlet boundary condition at one point
+#         bc = fem.dirichletbc(default_scalar_type(0), inlet_dof, V)
+
+#         # now we set the wave speed proportional to the minimum distance field
+#         f = 1/(2**(20*c))
+
+#     # CALCULATING EPS: We need to make eps related to the mesh size
+#     # finding the max cell size now
+#     hmax, hmin,_ = h_max(domain)
+#     print(f"min edge size: {hmin} and max edge size: {hmax}")
+#     eps = hmax/2
+#     print(f"eps: {eps}")
+
+#     u = set_problem(V, bc, eps, f)
+
+#     return u
 
 
 def find_ps(distance_field, tag_dofs):
-    # thid function finds point source for selected face tag
+    # this function finds point source for selected face tag
     values = distance_field.vector.array
     inlet_values = values[tag_dofs]
     max_inlet_index = np.argmax(inlet_values)
@@ -85,7 +158,7 @@ def find_ps(distance_field, tag_dofs):
 
 
 def h_max(domain):
-    num_cells = domain.topology.index_map(domain.topology.dim).size_local
+    num_cells = domain.topology.index_map(domain.topology.dim).size_global
     cells = np.arange(num_cells, dtype=np.int32)
     domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology,
                                            domain.geometry)
@@ -95,6 +168,18 @@ def h_max(domain):
     h_max = max(h)
     h_min = min(h)
     return h_max, h_min, h_avg
+
+def edge_max(domain):
+    num_cells = domain.topology.index_map(domain.topology.dim).size_global
+    cells = np.arange(num_cells, dtype=np.int32)
+    domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology,
+                                           domain.geometry)
+    edge = dolfinx.cpp.mesh.h(domain, domain.topology.dim-2, cells)
+    # finding the max cell size now
+    edge_avg = np.mean(edge)
+    edge_max = max(edge)
+    edge_min = min(edge)
+    return edge_max, edge_min, edge_avg
 
 
 def set_problem(funcspace, boundary, epsilon, f):
@@ -134,62 +219,81 @@ def set_problem(funcspace, boundary, epsilon, f):
     return u
 
 
-def gradient_field(mesh, time_distance_map):
 
-    # Compute the symbolic gradient of the solution u
-    grad_u = ufl.grad(time_distance_map)
+def gala_extreme_nodes(domain, dtf_map, distance_threshold):
+    V = functionspace(domain, ("Lagrange", 1))
+    domain.topology.create_connectivity(domain.topology.dim - 1, domain.topology.dim)
+    
+    # Get boundary facets (2D triangles) and corresponding DOFs
+    boundary_facets_indices = dolfinx.cpp.mesh.exterior_facet_indices(domain.topology)
+    
+    # Dictionary to store facet -> dofs mapping
+    facet_to_dofs = {}
+    
+    # Iterate over all boundary facets
+    for facet in boundary_facets_indices.T:
+        facet_ = np.array([facet])
+        # Get DOFs associated with this facet
+        facet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1, facet_)
+        facet_to_dofs[facet] = facet_dofs  # Save facet and associated DOFs
+    
+    # Reverse mapping: dof -> list of facets it's associated with
+    dof_to_facets = {}
+    for facet, dofs in facet_to_dofs.items():
+        for dof in dofs:
+            if dof not in dof_to_facets:
+                dof_to_facets[dof] = []
+            dof_to_facets[dof].append(facet)
+    
+    # dtf_map values and mesh coordinates
+    dtf_values = dtf_map.x.array
+    coordinates = domain.geometry.x  # Get mesh node coordinates
 
-    # Define a vector function space for the gradient (e.g., Lagrange element of degree 1)
-    W = functionspace(mesh, ("Lagrange", 1, (3, )))
+    # Array to store DOFs with the highest value in their surrounding facets
+    highest_value_dofs = []
 
-    # Define the trial and test functions for the projection problem
-    w = ufl.TrialFunction(W)
-    v = ufl.TestFunction(W)
-
-    # Set up the variational problem to project the gradient
-    a = ufl.inner(w, v) * ufl.dx
-    L = ufl.inner(grad_u, v) * ufl.dx
-
-    # Solve the projection problem
-    w = fem.Function(W)
-    problem = fem.petsc.LinearProblem(a, L, u=w,
-                                      petsc_options={"ksp_type": "preonly",
-                                                     "pc_type": "lu"})
-    problem.solve()
-
-    x_comp = w.x.array.reshape(-1, 3)[:, 0]  # x component
-    y_comp = w.x.array.reshape(-1, 3)[:, 1]  # y component
-    z_comp = w.x.array.reshape(-1, 3)[:, 2]
-
-    # Combine into a single NumPy array
-    gradient_array = np.vstack((x_comp, y_comp, z_comp)).T
-
-    return w, gradient_array
-
-
-def import_mesh(path_mesh, path_facets):
-
-    with XDMFFile(MPI.COMM_WORLD, path_mesh, "r") as xdmf:
-        domain_ = xdmf.read_mesh(name="Grid")
-    domain_.topology.create_connectivity(domain_.topology.dim,
-                                         domain_.topology.dim - 1)
-
-    with XDMFFile(MPI.COMM_WORLD, path_facets, "r") as xdmf:
-        facet_ = xdmf.read_meshtags(domain_, name="Grid")
-    return domain_, facet_
-
-
-def export_soln(path_export, mesh, function):
-
-    # Save the solution in XDMF format for visualization
-    with XDMFFile(MPI.COMM_WORLD, path_export, "w") as file:
-        file.write_mesh(mesh)
-        file.write_function(function)
-
-# export as vtu
-def export_vtk(path_export, function):
-    vtkfile = VTKFile(MPI.COMM_WORLD, path_export, "w")
-    vtkfile.write_function(function)
+    # Iterate through all DOFs
+    for dof, facets in dof_to_facets.items():
+        # Collect all the DOFs in the surrounding facets
+        surrounding_dofs = set()  # Use set to avoid duplicates
+        for facet in facets:
+            surrounding_dofs.update(facet_to_dofs[facet])
+        
+        # Get the dtf_map values for these surrounding DOFs
+        surrounding_values = {d: dtf_values[d] for d in surrounding_dofs}
+        
+        # Check if the current DOF has the highest value in the surrounding facets
+        if dtf_values[dof] == max(surrounding_values.values()):
+            highest_value_dofs.append(dof)
+    
+    # Now filter highest_value_dofs based on pairwise distances
+    final_dofs = []
+    while highest_value_dofs:
+        current_dof = highest_value_dofs.pop(0)
+        current_coords = coordinates[current_dof]
+        current_dtf = dtf_values[current_dof]
+        
+        keep_current = True
+        
+        for kept_dof in final_dofs:
+            kept_coords = coordinates[kept_dof]
+            distance = np.linalg.norm(current_coords - kept_coords)
+            
+            # If the nodes are close, keep the one with the higher dtf value
+            if distance < distance_threshold:
+                kept_dtf = dtf_values[kept_dof]
+                if current_dtf <= kept_dtf:
+                    keep_current = False
+                    break
+                else:
+                    # Replace the kept node with the current node
+                    final_dofs.remove(kept_dof)
+                    break
+        
+        if keep_current:
+            final_dofs.append(current_dof)
+    
+    return final_dofs  # Return the filtered DOFs based on the distance threshold
 
 
 def cluster_map_dtf(values, num_clusters=25):
@@ -363,7 +467,7 @@ def extreme_clusters(mesh, cluster_map, distance_threshold):
     return end_clusters
 
 
-def separate_clusters(mesh, clustersmap, distance_threshold, cluster_threshold=20):
+def separate_clusters(mesh, clustersmap, distance_threshold, cluster_threshold=30):
 
     separate_clusters = spatial_clustering(mesh,clustersmap)
     new_clusters = merging_small_clusters(mesh, separate_clusters, cluster_threshold)
@@ -465,7 +569,6 @@ def smaller_clusters(mesh, separate_cluster_map, distance_map, dtf_map):
     return u#, end_clusters
 
 
-
 def rescale_distance_map(mesh, final_cluster_map, distance_map):
     num_clusters = int(np.max(final_cluster_map.x.array)) + 1
     distance_map_array = distance_map.x.array
@@ -484,184 +587,165 @@ def rescale_distance_map(mesh, final_cluster_map, distance_map):
 
     return rescaled_distance_map, rescaled_distance_map_array
 
+def compute_gradient(path_file, save_path):
+    reader = vtk.vtkXMLUnstructuredGridReader()
+    reader.SetFileName(path_file) 
+    reader.Update()
 
-def find_nearest_node(point, coordinates):
-    distances = np.linalg.norm(coordinates - point, axis=1)
-    return np.argmin(distances)
+    # Step 2: Get the mesh
+    data = reader.GetOutput()
 
+    # Step 3: Compute the gradient
+    gradient_filter = vtk.vtkGradientFilter()
+    gradient_filter.SetInputData(data)
+    gradient_filter.SetInputScalars(vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, 0)  # Assuming scalar field is at points
+    gradient_filter.SetResultArrayName("Gradient")  # Name for the gradient array
+    gradient_filter.Update()
 
-def interpolate_gradient(gradient_array, point, coordinates):
-    """
-    Interpolate the gradient at a given point using barycentric interpolation.
+    # Step 4: Get the output mesh with gradient
+    gradient_data = gradient_filter.GetOutput()
 
-    Parameters:
-    - gradient_array: Array of gradient vectors at each node (shape should be (num_nodes, dim)).
-    - point: The point at which to interpolate the gradient (as a numpy array).
-    - coordinates: The coordinates of all nodes (as a numpy array).
-
-    Returns:
-    - interpolated_gradient: The interpolated gradient at the given point.
-    """
-    # Find the Delaunay triangulation of the coordinates
-    tri = Delaunay(coordinates)
-
-    # Find the simplex (triangle/tetrahedron) that contains the point
-    simplex = tri.find_simplex(point)
-
-    # Get the vertices of the simplex
-    vertices = tri.simplices[simplex]
-
-    # Get the coordinates and gradients of the vertices
-    #vertex_coords = coordinates[vertices]
-    vertex_grads = gradient_array[vertices]
-
-    # Compute the barycentric coordinates of the point within the simplex
-    bary_coords = tri.transform[simplex, :3].dot(point - tri.transform[simplex, 3])
-    bary_coords = np.append(bary_coords, 1 - bary_coords.sum())
-
-    # Interpolate the gradient using barycentric coordinates
-    interpolated_gradient = np.dot(bary_coords, vertex_grads)
-    print(interpolated_gradient)
-
-    return interpolated_gradient
+    # Step 5: Save the result to a new .vtu file
+    writer = vtk.vtkXMLUnstructuredGridWriter()
+    writer.SetFileName(save_path)  # Output file name
+    writer.SetInputData(gradient_data)
+    writer.Write()
 
 
-def is_point_within_mesh(point, mesh_coordinates):
-    """
-    Check if the point is within the bounding box of the mesh.
+# def trace_centerline_vtk(grad_dtf_path, start_point):
+#     # Step 1: Load the .vtu file
 
-    Parameters:
-    - point: The point to check (as a numpy array).
-    - mesh_coordinates: The coordinates of all nodes in the mesh (as a numpy array).
+#     reader = vtk.vtkXMLUnstructuredGridReader()
+#     reader.SetFileName(grad_dtf_path)
+#     reader.Update()
 
-    Returns:
-    - within_bounds: Boolean indicating if the point is within the mesh bounds.
-    """
-    min_bounds = np.min(mesh_coordinates, axis=0)
-    max_bounds = np.max(mesh_coordinates, axis=0)
+#     # Step 2: Get the dataset and inspect point data arrays
+#     dataset = reader.GetOutput()
 
-    return np.all(point >= min_bounds) and np.all(point <= max_bounds)
+#     # Assume the gradient array is named "Gradient" (replace this with the correct name from your file)
+#     gradient_array_name = "Gradient"  # Set this to the correct array name
 
+#     # Step 3: Set up the stream tracer and use the gradient as the vector field
+#     streamTracer = vtk.vtkStreamTracer()
+#     streamTracer.SetInputData(dataset)
 
-def trace_centerline_vtk(mesh, gradient_array, start_point, end_point, step_size=0.5, tolerance=1):
+#     # Set the active vector field to the gradient array
+#     streamTracer.SetInputArrayToProcess(
+#         0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, gradient_array_name
+#     )
 
-    """
-    Trace a centerline from start_point to end_point by following the gradient of gradient_array,
-    and save the points in VTK format.
+#     # Optional: Set seed points for the stream tracer (you can customize this part)
+#     seed_points = vtk.vtkPointSource()
+#     seed_points.SetRadius(0.01)
+#     seed_points.SetNumberOfPoints(10)
+#     seed_points.SetCenter(start_point)
+#     seed_points.Update()
 
-    Parameters:
-    - gradient_array: Array of gradient vectors at each node (shape should be (num_nodes, dim)).
-    - start_point: The starting point of the centerline (as a numpy array).
-    - end_point: The ending point of the centerline (as a numpy array).
-    - coordinates: The coordinates of all nodes (as a numpy array).
-    - step_size: The size of the step taken along the gradient.
-    - tolerance: The tolerance for stopping the trace when close to the end_point.
+#     streamTracer.SetSourceConnection(seed_points.GetOutputPort())
 
-    Returns:
-    - centerline_polydata: vtkPolyData containing the centerline points and lines.
-    """
-    # Initialize the current point to the starting point
-    coordinates = mesh.geometry.x
-    current_point = np.array(start_point)
+#     # Step 4: Set integration parameters
+#     streamTracer.SetIntegratorTypeToRungeKutta4()
+#     streamTracer.SetInterpolatorTypeToDataSetPointLocator()
+#     streamTracer.SetMaximumPropagation(50)
+#     streamTracer.SetMaximumPropagation(500)
+#     streamTracer.SetInitialIntegrationStep(0.2)
+#     streamTracer.SetMinimumIntegrationStep(0.01)
+#     streamTracer.SetMaximumIntegrationStep(0.5)
+    
+#     streamTracer.SetIntegrationDirectionToBackward()
 
-    # Initialize vtk points and lines for the centerline
-    centerline_points = vtk.vtkPoints()
-    centerline_lines = vtk.vtkCellArray()
+#     # Step 5: Update and get streamlines
+#     streamTracer.Update()
 
-    # Insert the starting point
-    previous_point_id = centerline_points.InsertNextPoint(current_point)
+#     # Step 6: Export the streamline as a .vtp file
+#     streamlines = streamTracer.GetOutput()
 
-    while np.linalg.norm(current_point - end_point) > tolerance:
-        # Interpolate the gradient at the current point
-
-        grad_at_point = interpolate_gradient(gradient_array, current_point, coordinates)
-        # Normalize the gradient to get the direction
-        direction = -grad_at_point / np.linalg.norm(grad_at_point)
-
-        # Take a step in the direction of the gradient
-        next_point = current_point + step_size * direction
-       
-        if not is_point_within_mesh(next_point, coordinates):
-            print("Next point is outside the mesh bounds, stopping trace.")
-            break
-        # Insert the new point
-        point_id = centerline_points.InsertNextPoint(next_point)
-
-        # Create a line between the previous and current point
-        line = vtk.vtkLine()
-        line.GetPointIds().SetId(0, previous_point_id)
-        line.GetPointIds().SetId(1, point_id)
-        centerline_lines.InsertNextCell(line)
-
-        # Update the current point and previous_point_id
-        current_point = next_point
-        previous_point_id = point_id
-
-    # Create vtkPolyData to hold the centerline points and lines
-    centerline_polydata = vtk.vtkPolyData()
-    centerline_polydata.SetPoints(centerline_points)
-    centerline_polydata.SetLines(centerline_lines)
-
-    return centerline_polydata#centerline_points, centerline_lines#centerline_polydata, centerline_lines
+#     return streamlines
 
 
-def trace_centerline_vtk_nodes(mesh, gradient_array, start_point, end_point, step_size=0.05, tolerance=0.5):
-    """
-    Trace a centerline from start_point to end_point by following the gradient of gradient_array,
-    and save the points in VTK format.
 
-    Parameters:
-    - grad_u_array: Array of gradient vectors at each node (shape should be (num_nodes, dim)).
-    - start_point: The starting point of the centerline (as a numpy array).
-    - end_point: The ending point of the centerline (as a numpy array).
-    - coordinates: The coordinates of all nodes (as a numpy array).
-    - step_size: The size of the step taken along the gradient.
-    - tolerance: The tolerance for stopping the trace when close to the end_point.
+def trace_centerline_vtk(grad_dtf_path, start_point):
+    # Step 1: Load the .vtu file
+    reader = vtk.vtkXMLUnstructuredGridReader()
+    reader.SetFileName(grad_dtf_path)
+    reader.Update()
 
-    Returns:
-    - centerline_polydata: vtkPolyData containing the centerline points and lines.
-    """
-    # Initialize the current point to the starting point
-    coordinates = mesh.geometry.x
-    current_point = np.array(start_point)
+    # Step 2: Get the dataset and inspect point data arrays
+    dataset = reader.GetOutput()
 
-    # Initialize vtk points and lines for the centerline
-    centerline_points = vtk.vtkPoints()
-    centerline_lines = vtk.vtkCellArray()
+    # Set the name of the gradient array
+    gradient_array_name = "Gradient"  # Set this to the correct array name
 
-    # Insert the starting point
-    previous_point_id = centerline_points.InsertNextPoint(current_point)
+    # Step 3: Set up the stream tracer and use the gradient as the vector field
+    streamTracer = vtk.vtkStreamTracer()
+    streamTracer.SetInputData(dataset)
 
-    while np.linalg.norm(current_point - end_point) > tolerance:
-        # Find the nearest node to the current point
-        nearest_node_index = find_nearest_node(current_point, coordinates)
+    # Set the active vector field to the gradient array
+    streamTracer.SetInputArrayToProcess(
+        0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, gradient_array_name
+    )
 
-        # Get the gradient at the nearest node
-        grad_at_point = gradient_array[nearest_node_index]
+    # Step 4: Set seed points for the stream tracer
+    seed_points = vtk.vtkPointSource()
+    seed_points.SetRadius(0.15)  # Adjust as needed
+    seed_points.SetNumberOfPoints(100)  # Use more seed points
+    seed_points.SetCenter(start_point)  # Center at start_point
+    seed_points.Update()
 
-        # Normalize the gradient to get the direction
-        direction = -grad_at_point / np.linalg.norm(grad_at_point)
+    streamTracer.SetSourceConnection(seed_points.GetOutputPort())
 
-        # Take a step in the direction of the gradient
-        next_point = current_point + step_size * direction
+    # Step 5: Set integration parameters
+    streamTracer.SetIntegratorTypeToRungeKutta4()
+    streamTracer.SetInterpolatorTypeToDataSetPointLocator()
+    streamTracer.SetMaximumPropagation(500)
+    streamTracer.SetInitialIntegrationStep(0.2)
+    streamTracer.SetMinimumIntegrationStep(0.01)
+    streamTracer.SetMaximumIntegrationStep(0.5)
+    streamTracer.SetIntegrationDirectionToBackward()
 
-        # Insert the new point
-        point_id = centerline_points.InsertNextPoint(next_point)
+    # Step 6: Update and get streamlines
+    streamTracer.Update()
+    streamlines = streamTracer.GetOutput()
 
-        # Create a line between the previous and current point
-        line = vtk.vtkLine()
-        line.GetPointIds().SetId(0, previous_point_id)
-        line.GetPointIds().SetId(1, point_id)
-        centerline_lines.InsertNextCell(line)
+    # Step 7: Get number of lines (cells) in the streamline output
+    num_cells = streamlines.GetNumberOfCells()
 
-        # Update the current point and previous_point_id
-        current_point = next_point
-        previous_point_id = point_id   
-    # Create vtkPolyData to hold the centerline points and lines
-    centerline_polydata = vtk.vtkPolyData()
-    centerline_polydata.SetPoints(centerline_points)
-    centerline_polydata.SetLines(centerline_lines)
-    return centerline_polydata#centerline_points, centerline_lines
+    if num_cells == 0:
+        print("No streamlines were generated.")
+        return streamlines, streamlines
+    elif num_cells == 1:
+        return streamlines, streamlines  # Return the only streamline
+
+    # Step 8: Randomly select one line (cell)
+    #selected_cell_id = random.randint(0, num_cells - 1)
+
+    # Step 9: Extract the selected line and its points
+    selected_polydata = vtk.vtkPolyData()
+    selected_points = vtk.vtkPoints()
+    selected_lines = vtk.vtkCellArray()
+
+    # Get the selected cell (streamline)
+    selected_cell = streamlines.GetCell(num_cells - 1)
+
+    # Create a new cell and add its points to `selected_points`
+    selected_line = vtk.vtkPolyLine()
+    selected_line.GetPointIds().SetNumberOfIds(selected_cell.GetNumberOfPoints())
+
+    for i in range(selected_cell.GetNumberOfPoints()):
+        point_id = selected_cell.GetPointId(i)
+        point = streamlines.GetPoint(point_id)
+        selected_points.InsertNextPoint(point)
+        selected_line.GetPointIds().SetId(i, i)
+
+    # Add the line to the cell array
+    selected_lines.InsertNextCell(selected_line)
+
+    # Set the points and lines in the new polydata
+    selected_polydata.SetPoints(selected_points)
+    selected_polydata.SetLines(selected_lines)
+
+    # Return both all streamlines and the selected one
+    return streamlines, selected_polydata
 
 
 def center_point_cluster(mesh, new_clustermap, cluster_number, distance_map):
@@ -687,43 +771,101 @@ def center_point_cluster(mesh, new_clustermap, cluster_number, distance_map):
     return max_dist_point
 
 
-def resample_centerline(polydata, subdivision_length):
-    # Create a spline filter to resample the lines
-    spline_filter = vtk.vtkSplineFilter()
-    spline_filter.SetInputData(polydata)
 
-    # Set the resolution (distance between points along the spline)
-    spline_filter.SetSubdivideToLength()
-    spline_filter.SetLength(subdivision_length)  # Set desired length between points
+def combinie_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path):
 
-    # Update the spline filter
-    spline_filter.Update()
+    # find the coordinates of the mesh
+    coordinates = mesh.geometry.x
+    # cluster_array = cluster_map.x.array
+    # # find the indices for the first cluster (where we shouldn't have any extreme nodes)
+    cluster_indices = np.where(cluster_map.x.array == 0)[0]
 
-    # Get the resampled polydata with points
-    resampled_polydata = spline_filter.GetOutput()
+    # now make sure none of our extreme nodes are not in the first cluster
+    extreme_nodes_filtered = np.array(list(set(extreme_nodes) - set(cluster_indices)))
 
-    # Get the points from the resampled data
-    resampled_points = resampled_polydata.GetPoints()
+    # now make sure there is only one extreme point per cluster (per outlet)
+    # cluster_values_extreme_nodes = cluster_array[extreme_nodes_filtered] # first find which clusters they're a part of
 
-    # Create a new vtkPolyData to hold the resampled points and new lines
-    new_polydata = vtk.vtkPolyData()
-    new_polydata.SetPoints(resampled_points)
+    # Initialize vtkPoints and vtkCellArray for the combined centerline
+    combined_centerline_points = vtk.vtkPoints()
+    combined_centerline_lines = vtk.vtkCellArray()
 
-    # Create a vtkCellArray to store the new lines
-    new_lines = vtk.vtkCellArray()
+    point_offset = 0  # Offset to keep track of the point IDs across different centerlines
+    compute_gradient(dtf_sol_path, dtf_sol_path + "grad_dtf.vtu")
 
-    # Manually connect the points by creating lines between consecutive points
-    for i in range(resampled_points.GetNumberOfPoints() - 1):
-        line = vtk.vtkLine()
-        line.GetPointIds().SetId(0, i)
-        line.GetPointIds().SetId(1, i + 1)
-        new_lines.InsertNextCell(line)
+    for j in range(len(extreme_nodes_filtered)):
+        # first find out if the selected extreme node is in the first cluster
+            # start point are the coordinates 
+        start_pt = coordinates[extreme_nodes_filtered[j]]
+        allpoints, polydata = trace_centerline_vtk(dtf_sol_path + "grad_dtf.vtu", start_pt)
 
-    # Set the new lines to the new polydata
-    new_polydata.SetLines(new_lines)
+        # Append the vessel points to the combined centerline
+        for i in range(polydata.GetNumberOfPoints()):
+            point = polydata.GetPoint(i)
+            combined_centerline_points.InsertNextPoint(point)
 
-    return new_polydata
 
+        #Create a line from the polydata and add it to combined centerline lines
+        if polydata.GetNumberOfCells() > 0:  # Check if polydata has cells
+            line = vtk.vtkCellArray()
+            line.DeepCopy(polydata.GetLines())
+            for cell_id in range(line.GetNumberOfCells()):
+                id_list = vtk.vtkIdList()
+                line.GetCell(cell_id, id_list)
+                for idx in range(id_list.GetNumberOfIds()):
+                    id_list.SetId(idx, id_list.GetId(idx) + point_offset)
+                combined_centerline_lines.InsertNextCell(id_list)
+
+        #Update the point offset for the next centerline
+        point_offset += polydata.GetNumberOfPoints()
+
+    # Create vtkPolyData to hold the combined points and lines
+    combined_centerline_polydata = vtk.vtkPolyData()
+    combined_centerline_polydata.SetPoints(combined_centerline_points)
+    combined_centerline_polydata.SetLines(combined_centerline_lines)
+
+    return combined_centerline_polydata
+
+# def combining_cl(mesh, new_clustermap, extreme_nodes, distance_map, dtf_sol_path):
+#     # Initialize vtkPoints and vtkCellArray for the combined centerline
+#     combined_centerline_points = vtk.vtkPoints()
+#     combined_centerline_lines = vtk.vtkCellArray()
+
+#     point_offset = 0  # Offset to keep track of the point IDs across different centerlines
+#     compute_gradient(dtf_sol_path, dtf_sol_path + "grad_dtf.vtu")
+
+#     for j in range(len(extreme_nodes)):
+#         current_cluster = extreme_nodes[j]
+#         if current_cluster != 0:
+#             start_pt = center_point_cluster(mesh, new_clustermap, current_cluster, distance_map)
+#             polydata = trace_centerline_vtk(dtf_sol_path + "grad_dtf.vtu", start_pt)
+
+#             # Append the vessel points to the combined centerline
+#             for i in range(polydata.GetNumberOfPoints()):
+#                 point = polydata.GetPoint(i)
+#                 combined_centerline_points.InsertNextPoint(point)
+
+
+#             #Create a line from the polydata and add it to combined centerline lines
+#             if polydata.GetNumberOfCells() > 0:  # Check if polydata has cells
+#                 line = vtk.vtkCellArray()
+#                 line.DeepCopy(polydata.GetLines())
+#                 for cell_id in range(line.GetNumberOfCells()):
+#                     id_list = vtk.vtkIdList()
+#                     line.GetCell(cell_id, id_list)
+#                     for idx in range(id_list.GetNumberOfIds()):
+#                         id_list.SetId(idx, id_list.GetId(idx) + point_offset)
+#                     combined_centerline_lines.InsertNextCell(id_list)
+
+#             #Update the point offset for the next centerline
+#             point_offset += polydata.GetNumberOfPoints()
+
+#     # Create vtkPolyData to hold the combined points and lines
+#     combined_centerline_polydata = vtk.vtkPolyData()
+#     combined_centerline_polydata.SetPoints(combined_centerline_points)
+#     combined_centerline_polydata.SetLines(combined_centerline_lines)
+
+#     return combined_centerline_polydata
 
 # Processing centerlines to merge
 def merge_centerline_segments(centerline):
@@ -750,73 +892,6 @@ def merge_centerline_segments(centerline):
     merged_centerline = stripper.GetOutput()
 
     return merged_centerline
-
-
-def centerlines_with_tags(mesh, new_clustermap, extreme_nodes, distance_map, gradient_array, centerline_nodes=bool):
-    # Initialize vtkPoints, vtkCellArray, and tag array for the combined centerline
-    combined_centerline_points = vtk.vtkPoints()
-    combined_centerline_lines = vtk.vtkCellArray()
-    tags_array = vtk.vtkIntArray()  # This array will hold the tags for each line
-    tags_array.SetName("LineTags")  # Name the array to identify it later
-
-    point_offset = 0  # Offset to keep track of the point IDs across different centerlines
-
-
-    # Find the common end point
-    end_pt = center_point_cluster(mesh, new_clustermap, 0, distance_map)
-    hmax, _ ,_= h_max(mesh)
-
-    for j in range(len(extreme_nodes)):
-        current_cluster = extreme_nodes[j]
-        if current_cluster != 0:
-            start_pt = center_point_cluster(mesh, new_clustermap, current_cluster, distance_map)
-            if centerline_nodes is False:
-                print("Centerline extraction using gradient")
-                polydata_pre = trace_centerline_vtk(mesh, gradient_array, start_pt, end_pt, hmax, hmax*3)
-                polydata = resample_centerline(polydata_pre,hmax/5)
-                vessel_lines = polydata.GetLines()
-            else:
-                #vessel_points, vessel_lines = trace_centerline_vtk_nodes(mesh, gradient_array, start_pt, end_pt, hmax, hmax*3)
-                polydata_pre = trace_centerline_vtk_nodes(mesh, gradient_array, start_pt, end_pt, hmax, hmax*3)
-                polydata = resample_centerline(polydata_pre,hmax/5)
-                vessel_lines = polydata.GetLines()
-                print("Extracting centerline based on nodes")
-
-            # Append the vessel points and lines to the combined centerline
-            for i in range(polydata.GetNumberOfPoints()):
-                point = polydata.GetPoint(i)
-                combined_centerline_points.InsertNextPoint(point)
-
-            vessel_lines.InitTraversal()
-            id_list = vtk.vtkIdList()
-
-            # Tag lines with a specific value (e.g., cluster number)
-            line_tag = j  # Tag lines with th
-
-            while vessel_lines.GetNextCell(id_list):
-                # Create a new line with updated point IDs
-                line = vtk.vtkLine()
-                line.GetPointIds().SetId(0, id_list.GetId(0) + point_offset)
-                line.GetPointIds().SetId(1, id_list.GetId(1) + point_offset)
-                combined_centerline_lines.InsertNextCell(line)
-
-                # Add the tag (e.g., cluster number) to the tag array for this line
-                tags_array.InsertNextValue(line_tag)
-
-            # Update the point offset for the next centerline
-            point_offset += polydata.GetNumberOfPoints()
-
-    # Create vtkPolyData to hold the combined points and lines
-    combined_centerline_polydata = vtk.vtkPolyData()
-    combined_centerline_polydata.SetPoints(combined_centerline_points)
-    combined_centerline_polydata.SetLines(combined_centerline_lines)
-
-    # Attach the tags array to the cell data (for lines)
-    combined_centerline_polydata.GetCellData().AddArray(tags_array)
-    final_pd = merge_centerline_segments(combined_centerline_polydata)
-
-    return final_pd
-
 
 
 # creating dictionary for Bryan's merging code. This is Bryan's modified function
@@ -909,6 +984,13 @@ def findclosestpoint(polydata, refpoint):
     id = locator.FindClosestPoint(refpoint)
     coord = polydata.GetPoint(id)
     return coord
+
+
+def write_polydata(polydata, filename):
+    writer = vtk.vtkXMLPolyDataWriter()
+    writer.SetFileName(filename)
+    writer.SetInputData(polydata)
+    writer.Write()
 
 
 # calculate the average of centerline spacing to determine tolerance
@@ -1022,7 +1104,7 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
             
             # create edges: first coords is the bifurcation
             edges = create_edges(len(master_coords),len(master_coords)+count_addition-1)
-            edges.insert(0,[index_for_connecting_pt,len(master_coords)])
+            #edges.insert(0,[index_for_connecting_pt,len(master_coords)])
             
             # add to master_coords
             master_coords.extend(coords_to_add)

@@ -2,7 +2,9 @@
 
 #parameters
 file_name: /cylinder
-saving_dir: /results/09032024/node_vs_nonode
+saving_dir: /results/11072024/distance_fields
+type: aorta
+
 # if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
 multiple_wall_tag: False
@@ -16,12 +18,12 @@ inlet_face_tag: 2 # this is the exact inlet facetag number
 num_clusters: 20
 # what to run & save
 
-just_distance: False
+just_distance: True
 cluster: True
 centerlines: True
 centerline_node: True
 save_eikonal: True
 
-
+manual_ps: 
 
 

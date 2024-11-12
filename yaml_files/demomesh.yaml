@@ -2,7 +2,10 @@
 
 #parameters
 file_name: /demomesh
-saving_dir: /results/10302024/clustering_trials/all_together
+saving_dir: /results/11052024/summary
+type: aorta
+manual_ps: 46978
+
 
 # if this is false then you only need wall_face_tag, NOT wall_face_tag_2
 
@@ -22,3 +25,5 @@ cluster: True
 centerlines: True
 centerline_node: False
 save_eikonal: True
+
+

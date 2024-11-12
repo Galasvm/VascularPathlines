@@ -6,7 +6,7 @@ SimVascular into a format which is redeble in FEniCS.
 """
 
 '''
-Use python convert_vtu_and_vtp.py -ivtp  /Users/galasanchezvanmoer/Desktop/PhD_Project/VMR_models/0100_A_AO_COA/Meshes/0073_0001.vtp -ivtu /Users/galasanchezvanmoer/Desktop/PhD_Project/VMR_models/0100_A_AO_COA/Meshes/0073_0001.vtu -o Meshes/0100_A_AO_COA_coarse/0100_A_AO_COA_coarse.xdmf
+Use python convert_vtu_and_vtp.py -ivtp /Users/galasanchezvanmoer/Desktop/PhD_Project/VMR_models/0168_H_PULMFON_SVD/Meshes/PT4_6M_st25.vtp -ivtu /Users/galasanchezvanmoer/Desktop/PhD_Project/VMR_models/0168_H_PULMFON_SVD/Meshes/PT4_6M_st25.vtu -o Fine_Meshes/0168_H_PULMFON_SVD_FINE/0168_H_PULMFON_SVD_FINE.xdmf
 
 
 '''
