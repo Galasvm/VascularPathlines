@@ -59,7 +59,7 @@ def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
         ps_index_array = np.array([ps_index], dtype=np.int32)
 
         # define the dirichlet boundary condition at one point
-        bc = fem.dirichletbc(default_scalar_type(0.01), ps_index_array, V) # CHANGED THISSSSSSS 11/07/24
+        bc = fem.dirichletbc(default_scalar_type(0), ps_index_array, V) # CHANGED THISSSSSSS 11/07/24
     elif boundary_type == 3:
         filterted_bc_first =  np.append(distance, ps_index)
         filterted_bc =  np.array(list(set(boundary_dofs) - set(filterted_bc_first)))
@@ -431,7 +431,9 @@ def rescale_distance_map(mesh, final_cluster_map, distance_map):
         cluster_indices = np.where(final_cluster_map.x.array == cluster_id)[0]
         distance_values = distance_map_array[cluster_indices]
         max_radii = distance_values.max()
-        rescaled_values = distance_values/max_radii + 0.01 # GALA ADDED 0.01 
+        if max_radii == 0:
+            max_radii=0.01
+        rescaled_values = distance_values/max_radii 
         rescaled_distance_map_array[cluster_indices] = rescaled_values
 
     V = functionspace(mesh, ("Lagrange", 1))
@@ -638,6 +640,34 @@ def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path,geometry_type=
     return streamlines, selected_polydata
 
 
+# Processing centerlines to merge
+def merge_centerline_segments(centerline):
+    """
+    Merge all small lines for each tagged individual centerline into one long line.
+
+    Parameters
+    ----------
+    centerline : vtkPolyData
+        Combined centerline of the geometry with individual centerlines tagged by "CenterlineID".
+
+    Returns
+    -------
+    merged_centerline : vtkPolyData
+        The centerline with each individual tagged centerline merged into a single line.
+    """
+    # Use vtkStripper to merge connected line segments into one long line for each centerline
+    stripper = vtk.vtkStripper()
+    stripper.SetInputData(centerline)
+    stripper.JoinContiguousSegmentsOn()  # Ensure connected segments are joined
+    stripper.Update()
+
+    # Get the merged centerline
+    merged_centerline = stripper.GetOutput()
+
+    return merged_centerline
+
+
+
 # this was changed when I decided to select one of the seedpoints
 def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path, geometry_type="cere"): #GALA ADDED THIS dis map and geometry_type
 
@@ -692,6 +722,8 @@ def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path, geo
     combined_centerline_polydata = vtk.vtkPolyData()
     combined_centerline_polydata.SetPoints(combined_centerline_points)
     combined_centerline_polydata.SetLines(combined_centerline_lines)
+
+    final_centerline = merge_centerline_segments(combined_centerline_polydata)
 
     return combined_centerline_polydata
 
@@ -766,31 +798,7 @@ def combining_cl(mesh, new_clustermap, extreme_nodes, distance_map, dtf_sol_path
 
 
 
-# Processing centerlines to merge
-def merge_centerline_segments(centerline):
-    """
-    Merge all small lines for each tagged individual centerline into one long line.
 
-    Parameters
-    ----------
-    centerline : vtkPolyData
-        Combined centerline of the geometry with individual centerlines tagged by "CenterlineID".
-
-    Returns
-    -------
-    merged_centerline : vtkPolyData
-        The centerline with each individual tagged centerline merged into a single line.
-    """
-    # Use vtkStripper to merge connected line segments into one long line for each centerline
-    stripper = vtk.vtkStripper()
-    stripper.SetInputData(centerline)
-    stripper.JoinContiguousSegmentsOn()  # Ensure connected segments are joined
-    stripper.Update()
-
-    # Get the merged centerline
-    merged_centerline = stripper.GetOutput()
-
-    return merged_centerline
 
 
 # creating dictionary for Bryan's merging code. This is Bryan's modified function
@@ -1017,7 +1025,8 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
     for coord in master_coords:
         points.InsertNextPoint(coord)
     
-    pd = create_polydata_from_edges(master_edges,points)
+    pd_pre = create_polydata_from_edges(master_edges,points)
+    pd = merge_centerline_segments(pd_pre) #GALA ADDED THIS TO MAKE EACH CELL A SINGLE CENTERLINE
     #write_polydata(pd, save_dir+'edge_created_combined_cl.vtp')
     # recreate dict_cell from what we have
     dict_cell = {}
@@ -1046,10 +1055,148 @@ def save_centerline_vtk(centerline_polydata, filename):
     writer.SetInputData(centerline_polydata)
     writer.Write()
 
+import vtk
+
+def remove_lines_from_vtp(input_vtp_path, output_vtp_path, cells_to_remove):
+    # Read the VTP file
+    reader = vtk.vtkXMLPolyDataReader()
+    reader.SetFileName(input_vtp_path)
+    reader.Update()
+    polydata = reader.GetOutput()
+
+    # Use vtkThreshold to filter cells based on vtkOriginalCellIds
+    id_filter = vtk.vtkIdFilter()
+    id_filter.SetInputData(polydata)
+    id_filter.SetCellIdsArrayName("vtkOriginalCellIds")
+    id_filter.Update()
+
+    # Convert cells_to_remove to a set for quick lookup
+    cells_to_remove_set = set(cells_to_remove)
+    
+    # Create a new vtkPolyData to store the cells to keep
+    cells_to_keep = vtk.vtkPolyData()
+    cells_to_keep.DeepCopy(polydata)
+    
+    # Iterate over cells and remove those with IDs in cells_to_remove
+    cell_ids = vtk.vtkIdTypeArray()
+    cell_ids.SetName("vtkOriginalCellIds")
+
+    for i in range(cells_to_keep.GetNumberOfCells()):
+        if i not in cells_to_remove_set:
+            cell_ids.InsertNextValue(i)
+
+    # Extract only the cells with IDs in cell_ids
+    selection_node = vtk.vtkSelectionNode()
+    selection_node.SetFieldType(vtk.vtkSelectionNode.CELL)
+    selection_node.SetContentType(vtk.vtkSelectionNode.INDICES)
+    selection_node.SetSelectionList(cell_ids)
+
+    selection = vtk.vtkSelection()
+    selection.AddNode(selection_node)
+
+    extract_selection = vtk.vtkExtractSelection()
+    extract_selection.SetInputData(0, cells_to_keep)
+    extract_selection.SetInputData(1, selection)
+    extract_selection.Update()
+
+    # Convert the output to vtkPolyData
+    geometry_filter = vtk.vtkGeometryFilter()
+    geometry_filter.SetInputData(extract_selection.GetOutput())
+    geometry_filter.Update()
+
+    # Write the result to a new VTP file
+    writer = vtk.vtkXMLPolyDataWriter()
+    writer.SetFileName(output_vtp_path)
+    writer.SetInputData(geometry_filter.GetOutput())
+    writer.Write()
+
+# THIS IS WITHOUT THE PROMPTING
+# def main():
+#     time_start = time.time()
+
+#     yaml_file = "0052_H_CERE_H.yaml"
+
+#     # Determine parent folder
+#     parent = os.path.dirname(__file__)
+
+#     # Read yaml file located in simvascular_mesh/yaml_files
+#     with open(parent + "/yaml_files/" + yaml_file, "rb") as f:
+#         params = yaml.safe_load(f)
+
+#     yaml_file_name = params["file_name"]
+#     save_dir = parent + params["saving_dir"] + yaml_file_name
+#     mesh_dir = parent + "/Meshes" + yaml_file_name + yaml_file_name
+    
+#     domain, _ = import_mesh(mesh_dir + ".xdmf",
+#                                 mesh_dir + "_facet_markers.xdmf")
+
+#     edgemax,_,edgeavg = edge_max(domain)
+
+#     initial_dis_threshold = edgemax*0.8
+
+#     dis = solve_eikonal(domain, 1, 1, 1)
+#     export_vtk(save_dir + "/eikonal" + yaml_file_name + "_dis_map.vtu", dis)
+#     # export_soln(save_dir + "/eikonal" + yaml_file_name + "_dis_map.xdmf", domain, dis)
+#     point_index = params["manual_ps"]
+#     dtf_mod_speed = solve_eikonal(domain,2,1,point_index,dis)
+#     # export_soln(save_dir + "/eikonal" + yaml_file_name + "_dtf_mod_speed_map.xdmf", domain, dtf_mod_speed)
+
+#     geometry_type=params["type"]
+#     # geometry_type=input("please enter the geometry type (aorta, pulm, cere, or coro): ")
+
+
+#     cluster_graph = discritize_dtf(dtf_mod_speed, domain, geometry_type)
+#     cluster_separate, extreme = separate_clusters(domain, cluster_graph, initial_dis_threshold, 30)
+#     export_soln(save_dir + "/cluster" + yaml_file_name + "_cluster_map.xdmf", domain, cluster_separate)
+#     rescale_dis, rescale_dis_array = rescale_distance_map(domain, cluster_separate, dis)
+#     export_soln(save_dir + "/eikonal" + yaml_file_name + "_rescale_dis_map.xdmf", domain, rescale_dis)
+
+#     # dtf_map_extreme_nodes = solve_eikonal(domain, 2, 2,point_index, dis) # GALA CHANGED THIS
+#     # export_soln(save_dir + "/eikonal" + yaml_file_name + "_dtf_inverse_speed_map.xdmf", domain, dtf_map_extreme_nodes)
+#     extreme_nodes, surrounding_dofs = gala_extreme_nodes(domain,dtf_mod_speed,edgeavg*4) # CHANGEDDDDDDDDGALA CHANGED THIS
+#     #############################################
+
+#     # final_dis_map = solve_eikonal(domain,3,1,extreme_nodes,surrounding_dofs )
+#     # export_soln(save_dir + "/eikonal" + yaml_file_name + "_visual_selected_extreme_nodes.xdmf", domain, final_dis_map)
+#     # rescale_dis_second, _ = rescale_distance_map(domain, cluster_separate, final_dis_map)
+#     # export_soln(save_dir + "/eikonal" + yaml_file_name + "_final_rescale_dis_map.xdmf", domain, rescale_dis_second)
+
+#     point_dtf_map = solve_eikonal(domain, 2, 3, point_index,rescale_dis)
+#     # export_soln(save_dir + "/eikonal" + yaml_file_name + "_destination_time.xdmf", domain, point_dtf_map)
+#     export_vtk(save_dir + "/eikonal" + yaml_file_name + "_destination_time.vtu", point_dtf_map)
+
+#     centerline_polydata = combine_cl(domain, extreme_nodes, cluster_separate, save_dir + "/eikonal" + yaml_file_name + "_destination_time_p0_000000.vtu",save_dir + "/eikonal" + yaml_file_name + "_dis_map_p0_000000.vtu",geometry_type)
+
+#     save_centerline_vtk(centerline_polydata, save_dir + "/centerlines" + yaml_file_name + "_centerline.vtp")
+#     _, dict_cell = create_dict(centerline_polydata)
+#     tolerance = get_subdivided_cl_spacing(dict_cell)
+#     smooth_centerline_polydata,_,_,_ = combine_cls_into_one_polydata(dict_cell, tolerance/2) #CHANGED THIS GALA 10172024
+#     # merged_centerline_smooth = merge_centerline_segments(smooth_centerline_polydata)
+#     save_centerline_vtk(smooth_centerline_polydata, save_dir + "/centerlines" + yaml_file_name + "_smooth_centerline.vtp")
+#     ####################################
+#     # with open(save_dir + "/cluster" + yaml_file_name + "_extreme_clusters.txt", "w") as file:
+#     #     file.write(f"there are {len(extreme_clusters_)} extreme nodes: {extreme_clusters_}.")
+#     #     file.close()
+
+#     with open(save_dir + "/cluster" + yaml_file_name + "_extreme_nodes.txt", "w") as file:
+#         file.write(f"there are {len(extreme_nodes)} extreme nodes: {extreme_nodes}.")
+#         file.close()
+
+#     with open(save_dir + yaml_file_name + "_execution_time.txt", "w") as file:
+#         file.write(f"Time to run the entire code: {time.time() - time_start:0.2f}")
+#         file.close()
+
+# if __name__ == "__main__":
+#     main()
+
+import time
+import os
+import yaml
+
 def main():
     time_start = time.time()
 
-    yaml_file = "0100_A_AO_COA.yaml"
+    yaml_file = "0168_H_PULMFON_SVD_15.yaml"
 
     # Determine parent folder
     parent = os.path.dirname(__file__)
@@ -1065,20 +1212,32 @@ def main():
     domain, _ = import_mesh(mesh_dir + ".xdmf",
                                 mesh_dir + "_facet_markers.xdmf")
 
-    edgemax,edgemin,edgeavg = edge_max(domain)
+    edgemax,_,edgeavg = edge_max(domain)
 
     initial_dis_threshold = edgemax*0.8
 
     dis = solve_eikonal(domain, 1, 1, 1)
     export_vtk(save_dir + "/eikonal" + yaml_file_name + "_dis_map.vtu", dis)
     # export_soln(save_dir + "/eikonal" + yaml_file_name + "_dis_map.xdmf", domain, dis)
-    point_index = params["manual_ps"]
+
+    if "manual_ps" in params:
+        point_index = params["manual_ps"]
+    else:
+        point_index = int(input("The 'manual_ps' is missing. Please enter a point source (open the distance field and select id of the node you want): "))
+
     dtf_mod_speed = solve_eikonal(domain,2,1,point_index,dis)
     # export_soln(save_dir + "/eikonal" + yaml_file_name + "_dtf_mod_speed_map.xdmf", domain, dtf_mod_speed)
-
-    geometry_type=params["type"]
-    # geometry_type=input("please enter the geometry type (aorta, pulm, cere, or coro): ")
-
+    if "type" in params:
+        geometry_type = params["type"]
+    else:
+        valid_types = ["aorta", "pulm", "cere", "coro"]
+        while True:
+            geometry_type = input("The 'type' is missing from the file. Please enter a geometry type name [aorta/pulm/cere/coro]: ").strip().lower()
+            if geometry_type in valid_types:
+                break  # Exit the loop if the input is valid
+            else:
+                print("Error: Invalid input. Please enter one of the following options: aorta, pulm, cere, coro.")
+    
 
     cluster_graph = discritize_dtf(dtf_mod_speed, domain, geometry_type)
     cluster_separate, extreme = separate_clusters(domain, cluster_graph, initial_dis_threshold, 30)
@@ -1086,33 +1245,18 @@ def main():
     rescale_dis, rescale_dis_array = rescale_distance_map(domain, cluster_separate, dis)
     export_soln(save_dir + "/eikonal" + yaml_file_name + "_rescale_dis_map.xdmf", domain, rescale_dis)
 
-    # dtf_map_extreme_nodes = solve_eikonal(domain, 2, 2,point_index, dis) # GALA CHANGED THIS
-    # export_soln(save_dir + "/eikonal" + yaml_file_name + "_dtf_inverse_speed_map.xdmf", domain, dtf_map_extreme_nodes)
-    extreme_nodes, surrounding_dofs = gala_extreme_nodes(domain,dtf_mod_speed,edgeavg*4) # CHANGEDDDDDDDDGALA CHANGED THIS
-    #############################################
+    extreme_nodes, surrounding_dofs = gala_extreme_nodes(domain, dtf_mod_speed, edgeavg*4)
 
-    # final_dis_map = solve_eikonal(domain,3,1,extreme_nodes,surrounding_dofs )
-    # export_soln(save_dir + "/eikonal" + yaml_file_name + "_visual_selected_extreme_nodes.xdmf", domain, final_dis_map)
-    # rescale_dis_second, _ = rescale_distance_map(domain, cluster_separate, final_dis_map)
-    # export_soln(save_dir + "/eikonal" + yaml_file_name + "_final_rescale_dis_map.xdmf", domain, rescale_dis_second)
-
-    point_dtf_map = solve_eikonal(domain, 2, 3, point_index,rescale_dis)
-    # export_soln(save_dir + "/eikonal" + yaml_file_name + "_destination_time.xdmf", domain, point_dtf_map)
+    point_dtf_map = solve_eikonal(domain, 2, 3, point_index, rescale_dis)
     export_vtk(save_dir + "/eikonal" + yaml_file_name + "_destination_time.vtu", point_dtf_map)
 
-    centerline_polydata = combine_cl(domain, extreme_nodes, cluster_separate, save_dir + "/eikonal" + yaml_file_name + "_destination_time_p0_000000.vtu",save_dir + "/eikonal" + yaml_file_name + "_dis_map_p0_000000.vtu",geometry_type)
+    centerline_polydata = combine_cl(domain, extreme_nodes, cluster_separate, save_dir + "/eikonal" + yaml_file_name + "_destination_time_p0_000000.vtu", save_dir + "/eikonal" + yaml_file_name + "_dis_map_p0_000000.vtu", geometry_type)
 
     save_centerline_vtk(centerline_polydata, save_dir + "/centerlines" + yaml_file_name + "_centerline.vtp")
-    centerline_merged = merge_centerline_segments(centerline_polydata)
-    _, dict_cell = create_dict(centerline_merged)
+    _, dict_cell = create_dict(centerline_polydata)
     tolerance = get_subdivided_cl_spacing(dict_cell)
-    print(tolerance)
-    smooth_centerline_polydata,_,_,_ = combine_cls_into_one_polydata(dict_cell, tolerance/2) #CHANGED THIS GALA 10172024
-    save_centerline_vtk(smooth_centerline_polydata, save_dir + "/centerlines" + yaml_file_name + "smooth_centerline.vtp")
-    ####################################
-    # with open(save_dir + "/cluster" + yaml_file_name + "_extreme_clusters.txt", "w") as file:
-    #     file.write(f"there are {len(extreme_clusters_)} extreme nodes: {extreme_clusters_}.")
-    #     file.close()
+    smooth_centerline_polydata,_,_,_ = combine_cls_into_one_polydata(dict_cell, tolerance/2)
+    save_centerline_vtk(smooth_centerline_polydata, save_dir + "/centerlines" + yaml_file_name + "_smooth_centerline.vtp")
 
     with open(save_dir + "/cluster" + yaml_file_name + "_extreme_nodes.txt", "w") as file:
         file.write(f"there are {len(extreme_nodes)} extreme nodes: {extreme_nodes}.")
@@ -1122,7 +1266,35 @@ def main():
         file.write(f"Time to run the entire code: {time.time() - time_start:0.2f}")
         file.close()
 
+    # Ask if the user wants to remove any extra centerlines
+    while True:
+        response = input("Please visualize the centerline. Are there any extra centerlines you would like to remove? [yes/no]: ").strip().lower()
+        if response == "no":
+            print("No lines to remove. Ending the program.")
+            break
+        elif response == "yes":
+            # Prompt for cell indices to remove
+            while True:
+                try:
+                    cells_to_remove = input("Please enter the indexes of the lines to remove as a comma-separated list (e.g., 1, 2, 3): ")
+                    cells_to_remove = [int(i.strip()) for i in cells_to_remove.split(",")]
+
+                    # Optional: Add validation based on actual cell count, if accessible
+                    # cell_count = centerline_polydata.GetNumberOfCells()
+                    # if any(i < 0 or i >= cell_count for i in cells_to_remove):
+                    #     raise ValueError("Some indices are out of range.")
+
+                    print(f"Removing cells with indices: {cells_to_remove}")
+                    output_vtp_path = save_dir + "/centerlines" + yaml_file_name + "_smooth_centerline.vtp"
+                    remove_lines_from_vtp(save_dir + "/centerlines" + yaml_file_name + "_smooth_centerline.vtp", output_vtp_path, cells_to_remove)
+                    print(f"Modified centerline saved to {output_vtp_path}")
+                    break
+                except ValueError:
+                    print("Invalid input. Please enter a list of integers separated by commas.")
+            break
+        else:
+            print("Invalid response. Please enter 'yes' or 'no'.")
+
 if __name__ == "__main__":
     main()
 
-        
