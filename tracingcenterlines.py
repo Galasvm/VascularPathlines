@@ -1,5 +1,5 @@
 '''
-# Contributed by Gala Sanchez Van Moer (galasvm@berkeley.edu)
+Contributed by Gala Sanchez Van Moer (galasvm@berkeley.edu)
 
 python tracingcenterlines.py mesh/directory/name.xdmf save/directory --geometry_type aorta --pointsource 2
 
@@ -130,7 +130,7 @@ def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
     Solve the eikonal equation on the given domain with specified boundary conditions and field type.
 
     Args:
-        domain: The mesh domain.
+        domain (xdmf file): The mesh domain.
         boundary_type (int): The type of boundary condition (1 for walls, 2 for point source).
         f_type (int): The type of field (1 for steady speed, 3 for high-speed wave).
         ps_index (int, optional): The index of the point source. Default is 1.
@@ -155,9 +155,6 @@ def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
     if boundary_type == 1:  # Setting 0 at the walls (for distance field)
         bc = fem.dirichletbc(default_scalar_type(0), boundary_dofs, V)
     elif boundary_type == 2:  # Setting 0 at a point source (for destination time field)
-        if ps_index == 1:
-            dis_values = distance.x.array
-            ps_index = np.argmax(dis_values)
         ps_index_array = np.array([ps_index], dtype=np.int32)
 
         # Define the Dirichlet boundary condition at one point
@@ -1321,112 +1318,6 @@ def remove_lines_from_vtp(input_vtp_path, output_vtp_path, cells_to_remove):
     writer.SetInputData(geometry_filter.GetOutput())
     writer.Write()
 
-
-# def main():
-#     time_start = time.time()
-
-#     yaml_file = "0082_H_PULM_H.yaml"
-
-#     # Determine parent folder
-#     parent = os.path.dirname(__file__)
-
-#     # Read yaml file located in simvascular_mesh/yaml_files
-#     with open(parent + "/yaml_files/" + yaml_file, "rb") as f:
-#         params = yaml.safe_load(f)
-
-#     yaml_file_name = params["file_name"]
-#     save_dir = parent + params["saving_dir"] + yaml_file_name
-#     mesh_dir = parent + "/Meshes" + yaml_file_name + yaml_file_name
-    
-#     domain = import_mesh(mesh_dir + ".xdmf")
-#     _,_,edgeavg = edge_max(domain)
-
-#     dis = solve_eikonal(domain, 1, 1, 1)
-#     export_vtk(save_dir + "/eikonal" + yaml_file_name + "_dis_map.vtu", dis)
-
-
-#     if "manual_ps" in params:
-#         point_index = params["manual_ps"]
-#     else:
-#         user_input = input("The 'manual_ps' is missing. Please enter a point source (open the distance field and select id of the node you want): ")
-#         if user_input.strip() == "":
-#             point_index = automatic_pointsource(dis)
-#             print("No point source selected; automatically selecting point source.")
-#         else:
-#             point_index = int(user_input)
-
-#     dtf_mod_speed = solve_eikonal(domain,2,1,point_index,dis)
-#     # export_soln(save_dir + "/eikonal" + yaml_file_name + "_dtf_mod_speed_map.xdmf", domain, dtf_mod_speed)
-#     if "type" in params:
-#         geometry_type = params["type"]
-#     else:
-#         valid_types = ["aorta", "pulm", "cere", "coro"]
-#         while True:
-#             geometry_type = input("The 'type' is missing from the file. Please enter a geometry type name [aorta/pulm/cere/coro]: ").strip().lower()
-#             if geometry_type == "":
-#                 geometry_type = "cere"
-#                 print("Warning: No geometry type selected, automatically selecting cerebral. Results might not be as accurate.")
-#                 break
-#             elif geometry_type in valid_types:
-#                 break  # Exit the loop if the input is valid
-#             else:
-#                 print("Error: Invalid input. Please enter one of the following options: aorta, pulm, cere, coro.")
-    
-
-#     cluster_graph = discritize_dtf(dtf_mod_speed, domain, geometry_type)
-#     cluster_separate = separate_clusters(domain, cluster_graph, 30)
-#     export_xdmf(save_dir + "/cluster" + yaml_file_name + "_cluster_map.xdmf", domain, cluster_separate)
-#     rescale_dis= rescale_distance_map(domain, cluster_separate, dis)
-#     export_xdmf(save_dir + "/eikonal" + yaml_file_name + "_rescale_dis_map.xdmf", domain, rescale_dis)
-
-#     extreme_nodes, _ = gala_extreme_nodes(domain, dtf_mod_speed, edgeavg*4)
-
-#     point_dtf_map = solve_eikonal(domain, 2, 3, point_index, rescale_dis)
-#     export_vtk(save_dir + "/eikonal" + yaml_file_name + "_destination_time.vtu", point_dtf_map)
-
-#     centerline_polydata = combine_cl(domain, extreme_nodes, cluster_separate, save_dir + "/eikonal" + yaml_file_name + "_destination_time_p0_000000.vtu", save_dir + "/eikonal" + yaml_file_name + "_dis_map_p0_000000.vtu", geometry_type)
-
-#     save_centerline_vtk(centerline_polydata, save_dir + "/centerlines" + yaml_file_name + "_centerline.vtp")
-#     _, dict_cell = create_dict(centerline_polydata)
-#     tolerance = get_subdivided_cl_spacing(dict_cell)
-#     smooth_centerline_polydata,_,_,_ = combine_cls_into_one_polydata(dict_cell, tolerance/2)
-#     save_centerline_vtk(smooth_centerline_polydata, save_dir + "/centerlines" + yaml_file_name + "_smooth_centerline.vtp")
-
-#     with open(save_dir + "/cluster" + yaml_file_name + "_extreme_nodes.txt", "w") as file:
-#         file.write(f"there are {len(extreme_nodes)} extreme nodes: {extreme_nodes}.")
-#         file.close()
-
-#     with open(save_dir + yaml_file_name + "_execution_time.txt", "w") as file:
-#         file.write(f"Time to run the entire code: {time.time() - time_start:0.2f}")
-#         file.close()
-
-#     # Ask if the user wants to remove any extra centerlines
-
-#     while True:
-#         response = input("Please visualize the centerline. Are there any extra centerlines you would like to remove? [yes/no]: ").strip().lower()
-#         if response == "" or response == "no":
-#             print("No lines to remove. Ending the program.")
-#             break
-#         elif response == "yes":
-#             # Prompt for cell indices to remove
-#             while True:
-#                 try:
-#                     cells_to_remove = input("Please enter the indexes of the lines to remove as a comma-separated list (e.g., 1, 2, 3): ")
-#                     cells_to_remove = [int(i.strip()) for i in cells_to_remove.split(",")]
-
-#                     print(f"Removing cells with indices: {cells_to_remove}")
-#                     output_vtp_path = save_dir + "/centerlines" + yaml_file_name + "_smooth_centerline.vtp"
-#                     remove_lines_from_vtp(save_dir + "/centerlines" + yaml_file_name + "_smooth_centerline.vtp", output_vtp_path, cells_to_remove)
-#                     print(f"Modified centerline saved to {output_vtp_path}")
-#                     break
-#                 except ValueError:
-#                     print("Invalid input. Please enter a list of integers separated by commas.")
-#             break
-#         else:
-#             print("Invalid response. Please enter 'yes' or 'no'.")
-
-# if __name__ == "__main__":
-#     main()
 
 def main(mesh_path, save_dir, geometry_type=None, pointsource=None):
 
