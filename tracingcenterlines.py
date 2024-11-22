@@ -2,18 +2,18 @@
 Contributed by Gala Sanchez Van Moer (galasvm@berkeley.edu)
 
 python tracingcenterlines.py mesh/directory/name.xdmf save/directory --geometry_type aorta --pointsource 2
-
+python tracingcenterlines.py /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/Meshes/demomesh/demomesh.xdmf /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/11222024 --geometry_type aorta 
 '''
 
 try:
     import vtk
-except:
+except ImportError:
     raise ImportError("Could not find vtk, please install using pip or conda")
 
 try:
     import dolfinx
-except:
-    raise ImportError("Could not find meshio, please install")
+except ImportError:
+    raise ImportError("Could not find dolfinx, please install")
 
 import numpy as np
 from dolfinx import fem, default_scalar_type, log
@@ -26,9 +26,8 @@ from scipy.spatial import cKDTree
 from scipy.sparse.csgraph import connected_components
 from scipy.sparse import csr_matrix
 import os
-import yaml
-import time
 import argparse
+
 
 def import_mesh(path_name):
     """
@@ -39,18 +38,18 @@ def import_mesh(path_name):
         path_facets (str): Path to the XDMF file containing the facet tags.
 
     Returns:
-        tuple: A tuple containing the imported mesh (domain_) and the facet tags (facet_).
+        dolfinx.cpp.mesh.Mesh: The imported mesh.
     """
 
     # Read the mesh from the XDMF file
     with XDMFFile(MPI.COMM_WORLD, path_name, "r") as xdmf:
         domain = xdmf.read_mesh(name="Grid")
-    
-    # Create connectivity between the mesh elements and their facets
-    domain.topology.create_connectivity(domain.topology.dim, domain.topology.dim - 1)
 
-    
-    return domain 
+    # Create connectivity between the mesh elements and their facets
+    domain.topology.create_connectivity(domain.topology.dim, 
+                                        domain.topology.dim - 1)
+
+    return domain
 
 
 def export_xdmf(path_export, mesh, function):
@@ -58,7 +57,8 @@ def export_xdmf(path_export, mesh, function):
     Export a mesh and its associated fenicsx function to an XDMF file.
 
     Args:
-        path_export (str): Path to the XDMF file where the mesh and function will be saved.
+        path_export (str): Path to the XDMF file where the mesh and function
+        will be saved.
         mesh: The mesh to be exported.
         function: The function associated with the mesh to be exported.
 
@@ -75,14 +75,15 @@ def export_vtk(path_export, function):
     Export a function to a VTK file.
 
     Args:
-        path_export (str): Path to the VTK file where the function will be saved.
+        path_export (str): Path to the VTK file where the function will be
+        saved.
         function: The function to be exported.
 
     """
 
     # Create a VTK file for exporting the function
     vtkfile = VTKFile(MPI.COMM_WORLD, path_export, "w")
-    
+
     # Write the function to the VTK file
     vtkfile.write_function(function)
 
@@ -92,13 +93,14 @@ def save_centerline_vtk(centerline_polydata, filename):
     Save the centerline points and lines to a VTK file.
 
     Parameters:
-    - centerline_polydata: vtkPolyData containing the centerline points and lines.
+    - centerline_polydata: vtkPolyData containing the centerline points and
+    lines.
     - filename: The name of the output VTK file.
     """
     directory = os.path.dirname(filename)
     if directory and not os.path.exists(directory):
         os.makedirs(directory)
-    
+
     writer = vtk.vtkXMLPolyDataWriter()
     writer.SetFileName(filename)
     writer.SetInputData(centerline_polydata)
@@ -118,43 +120,50 @@ def automatic_pointsource(distance_map):
 
     # Get the distance map values
     distance_values = distance_map.x.array
-    
+
     # Find the index of the point source (the maximum distance value)
     point_source = np.argmax(distance_values)
-    
+
     return point_source
 
 
 def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
     """
-    Solve the eikonal equation on the given domain with specified boundary conditions and field type.
+    Solve the eikonal equation on the given domain with specified boundary
+    conditions and field type.
 
     Args:
         domain (xdmf file): The mesh domain.
-        boundary_type (int): The type of boundary condition (1 for walls, 2 for point source).
-        f_type (int): The type of field (1 for steady speed, 3 for high-speed wave).
+        boundary_type (int): The type of boundary condition
+                            (1 for walls, 2 for point source).
+        f_type (int): The type of field
+                        (1 for steady speed, 3 for high-speed wave).
         ps_index (int, optional): The index of the point source. Default is 1.
-        distance (float, fem.Function): The distance field. If boundary_type is 2, this is just 1. if its for the
+        distance (float, fem.Function): The distance field.
+        If boundary_type is 2, this is just 1. if its for the
         destination time field then it is the distance field (fem.Function)
 
     Returns:
         fem.Function: The solution to the eikonal equation.
     """
-    
+
     # Create a function space on the domain
     V = functionspace(domain, ("Lagrange", 1))
-    
+
     # Create connectivity between the mesh elements and their facets
-    domain.topology.create_connectivity(domain.topology.dim - 1, domain.topology.dim)
-    
+    domain.topology.create_connectivity(domain.topology.dim - 1,
+                                        domain.topology.dim)
+
     # Get boundary facets (2D triangles) and corresponding DOFs
     boundary_facets = dolfinx.cpp.mesh.exterior_facet_indices(domain.topology)
-    boundary_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1, boundary_facets)
+    boundary_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
+                                                boundary_facets)
 
     # Set boundary conditions based on the boundary type
     if boundary_type == 1:  # Setting 0 at the walls (for distance field)
         bc = fem.dirichletbc(default_scalar_type(0), boundary_dofs, V)
-    elif boundary_type == 2:  # Setting 0 at a point source (for destination time field)
+    # Setting 0 at a point source (for destination time field)
+    elif boundary_type == 2: 
         ps_index_array = np.array([ps_index], dtype=np.int32)
 
         # Define the Dirichlet boundary condition at one point
@@ -182,32 +191,35 @@ def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
 
 def edge_max(domain):
     """
-    Calculate the maximum, minimum, and average edge lengths of the cells in the mesh.
+    Calculate the maximum, minimum, and average edge lengths of the cells in
+    the mesh.
 
     Args:
         domain: The mesh domain (xdmf file).
 
     Returns:
-        tuple: A tuple containing the maximum edge length, minimum edge length, and average edge length.
+        tuple: A tuple containing the maximum edge length, minimum edge length,
+        and average edge length.
     """
 
     # Get the total number of cells in the mesh
     num_cells = domain.topology.index_map(domain.topology.dim).size_global
-    
+
     # Create an array of cell indices
     cells = np.arange(num_cells, dtype=np.int32)
-    
+
     # Create a new mesh object with the same topology and geometry
-    domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology, domain.geometry)
-    
+    domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology,
+                                           domain.geometry)
+
     # Calculate the edge lengths of the cells
     edge = dolfinx.cpp.mesh.h(domain, domain.topology.dim-2, cells)
-    
+
     # Calculate the average, max and min edge length
     edge_avg = np.mean(edge)
     edge_max = max(edge)
     edge_min = min(edge)
-    
+
     return edge_max, edge_min, edge_avg
 
 
@@ -224,7 +236,7 @@ def set_problem(funcspace, DirichletBC, epsilon, f):
     Returns:
         u: The solution to the PDE problem.
     """
-    
+
     # Create a function to hold the solution
     u = fem.Function(funcspace)
     v = ufl.TestFunction(funcspace)
@@ -268,9 +280,11 @@ def set_problem(funcspace, DirichletBC, epsilon, f):
 
 def gala_extreme_nodes(domain, dtf_map, distance_threshold):
     """
-    Finds the local extremum nodes in the mesh based on the destination time field map. This code looks at all
-    the nodes on the boundary and finds the nodes with the highest value out of all its neighboring nodes. Each vessel
-    should have a local extremum, so this is used to identify all the outlets in the geometry
+    Finds the local extremum nodes in the mesh based on the destination time
+    field map. This code looks at all the nodes on the boundary and finds the
+    nodes with the highest value out of all its neighboring nodes. Each vessel
+    should have a local extremum, so this is used to identify all the outlets 
+    in the geometry
 
     Args:
         domain(xdmf file): The mesh domain .
@@ -278,40 +292,48 @@ def gala_extreme_nodes(domain, dtf_map, distance_threshold):
         distance_threshold: The distance threshold for filtering nodes.
 
     Returns:
-        tuple: A tuple containing the extreme DOFs and the surrounding DOFs array.
+        tuple: A tuple containing the extreme DOFs and the surrounding DOFs 
+        array.
     """
-    
+
     # Create a function space on the domain
     V = functionspace(domain, ("Lagrange", 1))
-    domain.topology.create_connectivity(domain.topology.dim - 1, domain.topology.dim)
-    
+    domain.topology.create_connectivity(domain.topology.dim - 1,
+                                        domain.topology.dim)
+
     # Get boundary facets (2D triangles) and corresponding DOFs
-    boundary_facets_indices = dolfinx.cpp.mesh.exterior_facet_indices(domain.topology)
-    
+    boundary_facets_indices = dolfinx.cpp.mesh.exterior_facet_indices(domain.
+                                                                      topology)
+
     # Dictionary to store facet -> DOFs mapping
     facet_to_dofs = {}
-    
-    # this loop iterates through each facet on the boundary, finds the DOFs associated with it
+
+    # this loop iterates through each facet on the boundary, finds the DOFs 
+    # associated with it
     # and stores the mapping in the facet_to_dofs dictionary
     for facet in boundary_facets_indices.T:
         facet_ = np.array([facet])
         # Get DOFs associated with this facet
-        facet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1, facet_)
+        facet_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
+                                                 facet_)
         facet_to_dofs[facet] = facet_dofs  # Save facet and associated DOFs
-    
-    # Now it finds all the DOFs, and finds all the facets that contain that DOF and stores the mapping in dof_to_facets
+
+    # Now it finds all the DOFs, and finds all the facets that contain that
+    # DOF and stores the mapping in dof_to_facets
     dof_to_facets = {}
     for facet, dofs in facet_to_dofs.items():
         for dof in dofs:
             if dof not in dof_to_facets:
                 dof_to_facets[dof] = []
             dof_to_facets[dof].append(facet)
-    
-    # destination time field values (the higher the value the further away from the inlet) and mesh coordinates
+
+    # destination time field values (the higher the value the further away
+    # from the inlet) and mesh coordinates
     dtf_values = dtf_map.x.array
     coordinates = domain.geometry.x  # Get mesh node coordinates
 
-    # initilize array to store DOFs with the highest value and their surrounding facets
+    # initilize array to store DOFs with the highest value and their
+    # surrounding facets
     highest_value_dofs = []
     surrounding_dofs_array = set()  # Use set to avoid duplicates
 
@@ -321,11 +343,12 @@ def gala_extreme_nodes(domain, dtf_map, distance_threshold):
         surrounding_dofs = set()  # Use set to avoid duplicates
         for facet in facets:
             surrounding_dofs.update(facet_to_dofs[facet])
-        
+
         # Get the dtf_map values for these surrounding DOFs
         surrounding_values = {d: dtf_values[d] for d in surrounding_dofs}
-        
-        # Check if the current DOF has the highest value in the surrounding facets
+
+        # Check if the current DOF has the highest value in the surrounding
+        # facets
         if dtf_values[dof] == max(surrounding_values.values()):
             highest_value_dofs.append(dof)
 
@@ -335,13 +358,13 @@ def gala_extreme_nodes(domain, dtf_map, distance_threshold):
         current_dof = highest_value_dofs.pop(0)
         current_coords = coordinates[current_dof]
         current_dtf = dtf_values[current_dof]
-        
+
         keep_current = True
-        
+
         for kept_dof in final_dofs:
             kept_coords = coordinates[kept_dof]
             distance = np.linalg.norm(current_coords - kept_coords)
-            
+
             # If the nodes are close, keep the one with the higher dtf value
             if distance < distance_threshold:
                 kept_dtf = dtf_values[kept_dof]
@@ -352,7 +375,7 @@ def gala_extreme_nodes(domain, dtf_map, distance_threshold):
                     # Replace the kept node with the current node
                     final_dofs.remove(kept_dof)
                     break
-        
+
         if keep_current:
             final_dofs.append(current_dof)
 
@@ -361,27 +384,28 @@ def gala_extreme_nodes(domain, dtf_map, distance_threshold):
         facets = dof_to_facets[dof]
         for facet in facets:
             surrounding_dofs_array.update(facet_to_dofs[facet])
-    
+
     surrounding_dofs_array_ = np.array(list(surrounding_dofs_array))
-    return final_dofs, surrounding_dofs_array_  # Return the filtered DOFs based on the distance threshold
+    return final_dofs, surrounding_dofs_array_
 
 
 def cluster_map_dtf(values, num_clusters=25):
     """
     Cluster the domain based on the destination time field values.
-    
+
 
     Args:
         values (array): The values to be clustered.
         num_clusters (int): The number of clusters to create. Default is 25.
 
     Returns:
-        array-like: An array of cluster labels corresponding to the input values.
+        array-like: An array of cluster labels corresponding to the input
+        values.
     """
 
     # Sort the indices of the values in ascending order
     sorted_indices = np.argsort(values)
-    
+
     # Determine the number of points per cluster
     num_points_per_cluster = len(values) // num_clusters
     print(f"number of points per clusters: {num_points_per_cluster}")
@@ -400,7 +424,8 @@ def cluster_map_dtf(values, num_clusters=25):
 
         clustered_values[sorted_indices[start_idx:end_idx]] = i
 
-    # If there are leftover points that don't fit into a full cluster, assign them to the last cluster
+    # If there are leftover points that don't fit into a full cluster, assign
+    # them to the last cluster
     if end_idx < len(values):
         clustered_values[sorted_indices[end_idx:]] = num_clusters
 
@@ -409,29 +434,30 @@ def cluster_map_dtf(values, num_clusters=25):
 
 def discritize_dtf(dtf_map, mesh, type="pulm"):
     """
-    Discretize the destination time field (dtf) map into clusters based on the specified geometry type.
+    Discretize the destination time field (dtf) map into clusters based on the
+    specified geometry type.
 
     Args:
         dtf_map (fem.Function): The destination time field map.
         mesh (xdmf file): The mesh domain.
-        type (str): The type of geometry (e.g., "aorta", "pulm", "cere", "coro", "custom").
+        type (str): The type of geometry
+        (e.g., "aorta", "pulm", "cere", "coro").
 
     Returns:
-        fem.Function: A function with the clustered destination time field values.
+        fem.Function: A function with the clustered destination time field 
+        values.
     """
-    
+
     # Extract dtf values from the map
     dtf_values = dtf_map.x.array
-    
+
     # Determine the number of nodes per cluster based on the geometry type
     if type == "aorta":
         nodes_per_cluster = 800
     elif type == "pulm" or type == "coro":
-        nodes_per_cluster = 1500 
+        nodes_per_cluster = 1500
     elif type == "cere":
         nodes_per_cluster = 2000
-    elif type == "custom":
-        nodes_per_cluster = 5190
     else:
         print("error: no geometry types")
         exit()
@@ -439,7 +465,7 @@ def discritize_dtf(dtf_map, mesh, type="pulm"):
     # Calculate the number of clusters
     num_clusters = len(dtf_values) // nodes_per_cluster
     print(num_clusters)
-    
+
     # Cluster the dtf values
     clustered_values = cluster_map_dtf(dtf_values, num_clusters)
 
@@ -449,14 +475,15 @@ def discritize_dtf(dtf_map, mesh, type="pulm"):
 
     # Assign the clustered values back to the function array
     u.x.array[:] = clustered_values
-    
+
     return u
 
 
 def spatial_clustering(mesh, clustersmap):
     """
-    Based on the destination time field clustered map, this code separates the nodes in each cluster 
-    that are on different vessels, and adds them as a separate cluster.
+    Based on the destination time field clustered map, this code separates the
+    nodes in each cluster that are on different vessels, and adds them as a
+    separate cluster.
 
 
     Args:
@@ -469,13 +496,13 @@ def spatial_clustering(mesh, clustersmap):
 
     # Get the coordinates of the mesh nodes
     coordinates = mesh.geometry.x
-    
+
     # Determine the number of initial clusters
     num_clusters = int(np.max(clustersmap.x.array)) + 1
-    
+
     # Calculate the maximum edge length in the mesh
     dis_max, _, _ = edge_max(mesh)
-    
+
     # Set the distance threshold for clustering
     distance_threshold = dis_max * 0.8
 
@@ -501,14 +528,17 @@ def spatial_clustering(mesh, clustersmap):
 
         # Create a graph where each node is connected to its neighbors
         num_nodes = len(cluster_indices)
-        graph = csr_matrix((np.ones(len(pairs)), (list(zip(*pairs))[0], list(zip(*pairs))[1])),
+        graph = csr_matrix((np.ones(len(pairs)), (list(zip(*pairs))[0],
+                                                  list(zip(*pairs))[1])),
                            shape=(num_nodes, num_nodes))
 
         # Find connected components in the graph
-        n_components, labels = connected_components(csgraph=graph, directed=False)
+        n_components, labels = connected_components(csgraph=graph,
+                                                    directed=False)
         components[cluster_id] = n_components
 
-        # If there is more than one connected component, separate them into new clusters
+        # If there is more than one connected component, separate them into
+        # new clusters
         if n_components > 1:
             for i in range(n_components):
                 component_indices = cluster_indices[labels == i]
@@ -531,7 +561,8 @@ def merging_small_clusters(mesh, separate_clusters, cluster_threshold: int):
     Args:
         mesh(xdmf file): The mesh domain.
         separate_clusters(array): The array of cluster labels.
-        cluster_threshold (int): The minimum size of a cluster. Clusters smaller than this will be merged.
+        cluster_threshold (int): The minimum size of a cluster.
+        Clusters smaller than this will be merged.
 
     Returns:
         array: An array of cluster labels after merging small clusters.
@@ -539,10 +570,10 @@ def merging_small_clusters(mesh, separate_clusters, cluster_threshold: int):
 
     # Get the coordinates of the mesh nodes
     coordinates = mesh.geometry.x
-    
+
     # Determine the number of clusters
     separated_num_clusters = int(np.max(separate_clusters)) + 1
-    
+
     # Build a global k-d tree for the mesh nodes
     tree = cKDTree(coordinates)
 
@@ -553,28 +584,32 @@ def merging_small_clusters(mesh, separate_clusters, cluster_threshold: int):
         # If the cluster is too small, merge it
         if len(cluster_indices) < cluster_threshold:
             cluster_coords = coordinates[cluster_indices]
-            
+
             # Find the nearest neighbors for the nodes in the small cluster
             _, nearest_neighbor_indices = tree.query(cluster_coords, k=2)
 
             # Get the cluster IDs of these nearest neighbors
-            nearest_cluster_ids = separate_clusters[nearest_neighbor_indices[:, 1]]
+            nearest_cluster_ids = separate_clusters[
+                nearest_neighbor_indices[:, 1]
+            ]
             nearest_cluster_ids = nearest_cluster_ids.astype(int)
-            nearest_cluster_ids = nearest_cluster_ids[nearest_cluster_ids != cluster_id]
+            nearest_cluster_ids = nearest_cluster_ids[
+                nearest_cluster_ids != cluster_id
+            ]
 
             if len(nearest_cluster_ids) > 0:
                 # Find the most common nearest cluster ID to merge into
                 merge_target = np.bincount(nearest_cluster_ids).argmax()
-                
+
                 # Merge the small cluster into the selected nearby cluster
                 separate_clusters[cluster_indices] = merge_target
-        
+
     return separate_clusters
 
 
 def noempty_clusters(mesh, new_clusters):
     """
-    Ensure that there are no empty clusters by reassigning nodes from empty 
+    Ensure that there are no empty clusters by reassigning nodes from empty
     clusters to nearby non-empty clusters.
 
     Args:
@@ -587,13 +622,13 @@ def noempty_clusters(mesh, new_clusters):
 
     # Get the coordinates of the mesh nodes
     coordinates = mesh.geometry.x
-    
+
     # Build a k-d tree for the mesh nodes
     tree = cKDTree(coordinates)
-    
+
     # Find unique cluster labels and their counts
     unique, counts = np.unique(new_clusters, return_counts=True)
-    
+
     # Identify empty clusters
     empty_clusters = unique[counts == 0]
 
@@ -605,31 +640,37 @@ def noempty_clusters(mesh, new_clusters):
             # Reassign these nodes to a nearby non-empty cluster
             _, nearest_indices = tree.query(coordinates[empty_nodes], k=1)
             nearest_cluster_ids = new_clusters[nearest_indices]
-            nearest_cluster_ids = nearest_cluster_ids[nearest_cluster_ids != empty_cluster]
+            nearest_cluster_ids = nearest_cluster_ids[
+                nearest_cluster_ids != empty_cluster
+                ]
 
             if len(nearest_cluster_ids) > 0:
                 # Find the most common nearby cluster ID to merge into
-                merge_target = np.bincount(nearest_cluster_ids.astype(int)).argmax()
+                merge_target = np.bincount(
+                    nearest_cluster_ids.astype(int)).argmax()
                 new_clusters[empty_nodes] = merge_target
 
     # Reassign cluster IDs to ensure consecutive numbering
     unique_clusters = np.unique(new_clusters)
-    cluster_mapping = {old_id: new_id for new_id, old_id in enumerate(unique_clusters)}
+    cluster_mapping = {old_id: new_id for new_id, old_id in
+                       enumerate(unique_clusters)}
 
-    new_clusters = np.array([cluster_mapping[old_id] for old_id in new_clusters])
+    new_clusters = np.array([cluster_mapping[old_id] for old_id in
+                             new_clusters])
 
     return new_clusters
 
 
 def separate_clusters(mesh, clustersmap, cluster_threshold=30):
     """
-    Separate clusters in the mesh by performing spatial clustering, 
+    Separate clusters in the mesh by performing spatial clustering,
     merging small clusters, and ensuring no empty clusters.
 
     Args:
         mesh(xdmf file): The mesh domain.
         clustersmap(fem.Function): The initial clusters map.
-        cluster_threshold (int): The minimum size of a cluster. Clusters smaller than this will be merged.
+        cluster_threshold (int): The minimum size of a cluster. Clusters
+        smaller than this will be merged.
 
     Returns:
         fem.Function: A function with the final cluster labels.
@@ -637,17 +678,18 @@ def separate_clusters(mesh, clustersmap, cluster_threshold=30):
 
     # Perform spatial clustering on the mesh
     separate_clusters = spatial_clustering(mesh, clustersmap)
-    
+
     # Merge small clusters into nearby larger clusters
-    new_clusters = merging_small_clusters(mesh, separate_clusters, cluster_threshold)
-    
+    new_clusters = merging_small_clusters(mesh, separate_clusters,
+                                          cluster_threshold)
+
     # Ensure there are no empty clusters
     new_clusters_final = noempty_clusters(mesh, new_clusters)
 
     # Create a new dolfinx function to hold the final clusters
     V = functionspace(mesh, ("Lagrange", 1))
     u = fem.Function(V)
-    
+
     # Assign the final cluster labels to the function array
     u.x.array[:] = new_clusters_final
     u.x.scatter_forward()
@@ -657,9 +699,10 @@ def separate_clusters(mesh, clustersmap, cluster_threshold=30):
 
 def rescale_distance_map(mesh, cluster_map, distance_map):
     """
-    Here we are rescaling the distance map based on the "radius" of each cluster. This is done to ensure
-    the center of the vessel is ~1 throughout the geometry regardless of the diameter of the vessel. This helps
-    to ensure the centerlines are treaced as accurately as possible
+    Here we are rescaling the distance map based on the "radius" of
+    each cluster. This is done to ensure the center of the vessel is ~1
+    throughout the geometry regardless of the diameter of the vessel. This
+    helps ensure the centerlines are treaced as accurately as possible
 
     Args:
         mesh(xdmf file): The mesh domain.
@@ -672,27 +715,27 @@ def rescale_distance_map(mesh, cluster_map, distance_map):
 
     # Determine the number of clusters
     num_clusters = int(np.max(cluster_map.x.array)) + 1
-    
+
     # Extract the distance map values
     distance_map_array = distance_map.x.array
-    
+
     # Initialize the array to store rescaled distance map values
     rescaled_distance_map_array = np.zeros_like(distance_map_array)
 
     for cluster_id in range(num_clusters):
         # Get the indices of nodes in the current cluster
         cluster_indices = np.where(cluster_map.x.array == cluster_id)[0]
-        
+
         # Get the distance values for the current cluster
         distance_values = distance_map_array[cluster_indices]
-        
+
         # Find the maximum distance value in the current cluster (the radius)
         max_radii = distance_values.max()
-        
+
         # Avoid division by zero by setting a minimum value for max_radii
         if max_radii == 0:
             max_radii = 0.01
-        
+
         # Rescale the distance values to be between 0 and 1
         rescaled_values = distance_values / max_radii
         rescaled_distance_map_array[cluster_indices] = rescaled_values
@@ -700,7 +743,7 @@ def rescale_distance_map(mesh, cluster_map, distance_map):
     # Create a function space on the mesh
     V = functionspace(mesh, ("Lagrange", 1))
     rescaled_distance_map = fem.Function(V)
-    
+
     # Assign the rescaled distance map values to the function array
     rescaled_distance_map.x.array[:] = rescaled_distance_map_array
 
@@ -709,10 +752,11 @@ def rescale_distance_map(mesh, cluster_map, distance_map):
 
 def compute_gradient_vtk(path_file, path_export):
     """
-    Compute the gradient of a scalar field in a VTK file and save the result to a new VTK file.
+    Compute the gradient of a scalar field in a VTK file and save the result
+    to a new VTK file.
 
     Args:
-        path_file (str): Path to the input VTK file 
+        path_file (str): Path to the input VTK file
         save_path (str): Path to save the output VTK file with the gradient.
 
     """
@@ -728,8 +772,10 @@ def compute_gradient_vtk(path_file, path_export):
     # Compute the gradient of the scalar field
     gradient_filter = vtk.vtkGradientFilter()
     gradient_filter.SetInputData(data)
-    gradient_filter.SetInputScalars(vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, 0)  # Assuming scalar field is at points
-    gradient_filter.SetResultArrayName("Gradient")  # Name for the gradient array
+    gradient_filter.SetInputScalars(
+        vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, 0)
+    # Name for the gradient array
+    gradient_filter.SetResultArrayName("Gradient")
     gradient_filter.Update()
 
     # Get the output mesh with the computed gradient
@@ -744,19 +790,21 @@ def compute_gradient_vtk(path_file, path_export):
 
 def finding_best_streamline(all_streamlines, dis_map_path):
     """
-    Find the best streamline traced from each outlet based on the distance map (choose the streamline with the highest distance).
+    Find the best streamline traced from each outlet based on the distance map
+    (choose the streamline with the highest distance).
 
     Args:
         all_streamlines(vtp file): The vtp file containing all streamlines.
         dis_map_path (str): Path to the VTK file containing the distance map.
 
     Returns:
-        int: The index of the best streamline, or None if no valid streamline is found.
+        int: The index of the best streamline, or None if no valid streamline
+        is found.
     """
 
     # Find the number of streamlines (cells)
     num_cells = all_streamlines.GetNumberOfCells()
-    
+
     # Read the distance map from the VTK file
     reader = vtk.vtkXMLUnstructuredGridReader()
     reader.SetFileName(dis_map_path)
@@ -772,10 +820,11 @@ def finding_best_streamline(all_streamlines, dis_map_path):
     # Create a vtkPoints object for specific points
     input_points = vtk.vtkPoints()
 
-    # Initialize variables to store the index of the best streamline and the max distance
+    # Initialize variables to store the index of the best streamline and the 
+    # max distance
     max_distance = -float("inf")
     best_streamline_index = -1  # To store the index of the best streamline
-    
+
     # Iterate through all the streamlines
     for i in range(num_cells):
         selected_line = all_streamlines.GetCell(i)
@@ -802,18 +851,20 @@ def finding_best_streamline(all_streamlines, dis_map_path):
 
         # Access the interpolated distance field using the correct name 'f'
         distance_array = interpolated_data.GetPointData().GetArray("f")
-        
+
         if distance_array is None:
             print(f"Error: Could not find the 'f' array for streamline {i}.")
             continue
 
         # Get the distance value at this point
-        distance_value = distance_array.GetValue(0)  # There's only one point in `points_polydata`
+        distance_value = distance_array.GetValue(0)
 
-        # If this distance is the highest, update the max distance and store the current index
+        # If this distance is the highest, update the max distance and store
+        # the current index
         if distance_value > max_distance:
             max_distance = distance_value
-            best_streamline_index = i  # Store the index of the current streamline
+            # Store the index of the current streamline
+            best_streamline_index = i
 
         # Clear points for the next iteration
         input_points.Reset()
@@ -824,20 +875,25 @@ def finding_best_streamline(all_streamlines, dis_map_path):
     else:
         print("No valid streamline found.")
         return None
-    
 
-def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path, geometry_type="cere"):
+
+def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path,
+                         geometry_type="cere"):
     """
-    Trace the centerline using a gradient distance-to-feature (DTF) map and a starting point.
+    Trace the centerline using a gradient destination time field (DTF) map and
+    a starting point.
 
     Args:
-        grad_dtf_path (str): Path to the VTK file containing the gradient DTF map.
+        grad_dtf_path (str): Path to the VTK file containing the gradient DTF
+        map.
         start_point (tuple): The starting point for the stream tracer.
         dis_map_path (str): Path to the VTK file containing the distance map.
-        geometry_type (str): The type of geometry (e.g., "cere", "pulm", "coro", "custom", "aorta").
+        geometry_type (str): The type of geometry
+        (e.g., "cere", "pulm", "coro", "aorta").
 
     Returns:
-        tuple: A tuple containing all streamlines and the selected best streamline.
+        tuple: A tuple containing all streamlines and the
+        selected best streamline.
     """
 
     # Set the radius based on the geometry type
@@ -864,7 +920,8 @@ def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path, geometry_type
 
     # Set the active vector field to the gradient array
     streamTracer.SetInputArrayToProcess(
-        0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS, gradient_array_name
+        0, 0, 0, vtk.vtkDataObject.FIELD_ASSOCIATION_POINTS,
+        gradient_array_name
     )
 
     # Set seed points for the stream tracer
@@ -909,7 +966,9 @@ def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path, geometry_type
 
     # Create a new cell and add its points to `selected_points`
     selected_line = vtk.vtkPolyLine()
-    selected_line.GetPointIds().SetNumberOfIds(selected_cell.GetNumberOfPoints())
+    selected_line.GetPointIds().SetNumberOfIds(
+        selected_cell.GetNumberOfPoints()
+        )
 
     for i in range(selected_cell.GetNumberOfPoints()):
         point_id = selected_cell.GetPointId(i)
@@ -930,19 +989,23 @@ def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path, geometry_type
 
 def merge_centerline_segments(centerline):
     """
-    Merge all small lines for each tagged individual centerline into one long line.
+    Merge all small lines for each tagged individual centerline into one long
+    line.
 
     Parameters
     ----------
     centerline : vtkPolyData
-        Combined centerline of the geometry with individual centerlines tagged by "CenterlineID".
+        Combined centerline of the geometry with individual centerlines tagged
+        by "CenterlineID".
 
     Returns
     -------
     merged_centerline : vtkPolyData
-        The centerline with each individual tagged centerline merged into a single line.
+        The centerline with each individual tagged centerline merged into a
+        single line.
     """
-    # Use vtkStripper to merge connected line segments into one long line for each centerline
+    # Use vtkStripper to merge connected line segments into one long line for
+    # each centerline
     stripper = vtk.vtkStripper()
     stripper.SetInputData(centerline)
     stripper.JoinContiguousSegmentsOn()  # Ensure connected segments are joined
@@ -954,9 +1017,11 @@ def merge_centerline_segments(centerline):
     return merged_centerline
 
 
-def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path, geometry_type="cere"):
+def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path,
+               geometry_type="cere"):
     """
-    Combine the centerlines traced from each extreme node (outlet of geometry) into a single polydata
+    Combine the centerlines traced from each extreme node (outlet of geometry)
+    into a single polydata
 
     Args:
         mesh(xdmf file): The mesh domain.
@@ -964,7 +1029,8 @@ def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path, geo
         cluster_map(fem.Function): The cluster map of the mesh.
         dtf_sol_path(str): Path to the distance-to-feature solution file.
         dis_map_path(stf): Path to the distance map file.
-        geometry_type (str): The type of geometry (e.g., "cere", "pulm", "coro", "custom", "aorta").
+        geometry_type (str): The type of geometry
+        (e.g., "cere", "pulm", "coro", "aorta").
 
     Returns:
         vtkPolyData: The combined centerline polydata.
@@ -973,17 +1039,21 @@ def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path, geo
     # Find the coordinates of the mesh nodes
     coordinates = mesh.geometry.x
     
-    # Find the indices for the first cluster (where we shouldn't have any extreme nodes)
+    # Find the indices for the first cluster (where we shouldn't have any
+    # extreme nodes)
     cluster_indices = np.where(cluster_map.x.array == 0)[0]
 
     # Filter out extreme nodes that are in the first cluster
-    extreme_nodes_filtered = np.array(list(set(extreme_nodes) - set(cluster_indices)))
+    extreme_nodes_filtered = np.array(
+        list(set(extreme_nodes) - set(cluster_indices))
+        )
 
     # Initialize vtkPoints and vtkCellArray for the combined centerline
     combined_centerline_points = vtk.vtkPoints()
     combined_centerline_lines = vtk.vtkCellArray()
 
-    point_offset = 0  # Offset to keep track of the point IDs across different centerlines
+    # Offset to keep track of the point IDs across different centerlines
+    point_offset = 0
 
     # Compute the gradient of the distance-to-feature solution
     compute_gradient_vtk(dtf_sol_path, dtf_sol_path + "grad_dtf.vtu")
@@ -991,16 +1061,20 @@ def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path, geo
     for j in range(len(extreme_nodes_filtered)):
         # Get the coordinates of the current extreme node
         start_pt = coordinates[extreme_nodes_filtered[j]]
-        
+
         # Trace the centerline from the current extreme node
-        _, polydata = trace_centerline_vtk(dtf_sol_path + "grad_dtf.vtu", start_pt, dis_map_path, geometry_type)
+        _, polydata = trace_centerline_vtk(dtf_sol_path + "grad_dtf.vtu",
+                                           start_pt,
+                                           dis_map_path,
+                                           geometry_type)
 
         # Append the vessel points to the combined centerline
         for i in range(polydata.GetNumberOfPoints()):
             point = polydata.GetPoint(i)
             combined_centerline_points.InsertNextPoint(point)
 
-        # Create a line from the polydata and add it to combined centerline lines
+        # Create a line from the polydata and add it to combined centerline
+        # lines
         if polydata.GetNumberOfCells() > 0:  # Check if polydata has cells
             line = vtk.vtkCellArray()
             line.DeepCopy(polydata.GetLines())
@@ -1019,61 +1093,65 @@ def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path, geo
     combined_centerline_polydata.SetPoints(combined_centerline_points)
     combined_centerline_polydata.SetLines(combined_centerline_lines)
 
-    # Merge centerline segments to form the final centerline
-    final_centerline = merge_centerline_segments(combined_centerline_polydata)
-
     return combined_centerline_polydata
 
 
-# creating dictionary for Bryan's merging code. This is Bryan's modified function
+"""
+This next function is modified from Bryan's (BryannGan) code to combine
+centerlines into one polydata
+"""
+
+
 def create_dict(pd):
-    dict_cell = {}  # key = cell number; value = [vtkPolyLine, [pt1, pt2, ...]]
-    distance_lst = [[0, 0, 0] for _ in range(pd.GetNumberOfCells())] # [distance, vtkPolyLine, [pt1, pt2, ...]]
-    
+    # key = cell number; value = [vtkPolyLine, [pt1, pt2, ...]]
+    dict_cell = {}
+    # [distance, vtkPolyLine, [pt1, pt2, ...]]
+    distance_lst = [[0, 0, 0] for _ in range(pd.GetNumberOfCells())]
+
     for i in range(pd.GetNumberOfCells()):
 
         cell = pd.GetCell(i)
- 
         num_points = cell.GetNumberOfPoints()
 
         # Get the coordinates of each point in the cell
         points = pd.GetPoints()
         init_pt_array = [0]*num_points
-        
+
         for j in range(num_points):
             point_id = cell.GetPointId(j)
             point = points.GetPoint(point_id)
             init_pt_array[j] = point
             # calculated cumulative distance for each line
-            
+
             if j > 0:
-                distance_lst[i][0] += np.linalg.norm(np.array(init_pt_array[j]) - np.array(init_pt_array[j-1]))
+                distance_lst[i][0] += np.linalg.norm(np.array(
+                    init_pt_array[j]) - np.array(init_pt_array[j-1]))
 
         # reverse the coordinate ordering due to Eikonal equation
-        
         distance_lst[i][1] = cell
         distance_lst[i][2] = init_pt_array
 
-    
     # sort the distance_lst based on the first index
     # re-order dict_cell content base on distance (from longest to shortest)
     distance_lst = sorted(distance_lst, key=lambda x: x[0], reverse=True)
-    
+
     # dict_cell[0] has the longest distance
-    for i in range(len(distance_lst)): 
+    for i in range(len(distance_lst)):
         # save the cell [vtp cell, pt coordinates]
         dict_cell[i] = []
         dict_cell[i].append(distance_lst[i][1])
         dict_cell[i].append(distance_lst[i][2])
 
-    
     return pd, dict_cell
 
-# helper functions for bryans combining cls into one polydata function. Also Bryan's
+"""
+This next functions is modified from Bryan's (BryannGan) code to combine
+centerlines into one polydata
+"""
+
 
 def create_polydata_from_edges(edges, points):
-    #print(edges)
-    #print(points)
+
     polydata = vtk.vtkPolyData()
     polydata.SetPoints(points)
 
@@ -1095,16 +1173,16 @@ def create_vtkpoints_from_coordinates(coords):
     # Create a vtkPoints object and insert the coordinates
     points = vtk.vtkPoints()
     for coord in coords:
-        points.InsertNextPoint(coord)  
+        points.InsertNextPoint(coord)
     return points
 
 
 def findclosestpoint(polydata, refpoint):
-    #"""Returns coordinate of point on polydata closest to refpoint."""
+    """Returns coordinate of point on polydata closest to refpoint."""
     locator = vtk.vtkPointLocator()
     locator.SetDataSet(polydata)
     locator.BuildLocator()
-    
+
     id = locator.FindClosestPoint(refpoint)
     coord = polydata.GetPoint(id)
     return coord
@@ -1126,20 +1204,22 @@ def get_subdivided_cl_spacing(dict_cell):
     for i in range(len(dict_cell)):
         pts = dict_cell[i][1]
         for j in range(len(pts)-1):
-            spacing.append(np.linalg.norm(np.array(pts[j]) - np.array(pts[j+1])))
+            spacing.append(np.linalg.norm(np.array(pts[j]) -
+                                          np.array(pts[j+1])))
     return np.mean(spacing)
 
 
-#modified Bryan's function (no radii) and changed the direction of cl
+# modified Bryan's function (no radii) and changed the direction of cl
 
 def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
     """
-    combine all centerlines into one polydata with the right connectivity/direction
+    combine all centerlines into one polydata with the right
+    connectivity/direction
     IMPORTANT: if subdivide factor change, tolerance should be adjusted!!
     """
     # dict_cell: {0: [polydata,pts], 1: [polydata,pts], ...}
     # first take the longest centerline and create a vtpPoint
-    # then, in the next centerline, start from the endpoint/target 
+    # then, in the next centerline, start from the endpoint/target
     # and go back to existing line and stop when it reaches a tolerance
     def create_edges(starting_num, ending_num):
         """
@@ -1149,19 +1229,20 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
         """
         edges = []
         for i in range(starting_num, ending_num):
-            edges.append([i,i+1])
+            edges.append([i, i+1])
         return edges
+
     def is_close(coord1, coord2, tol=0.1):
         """Helper function to compare coordinates with a tolerance."""
         return np.linalg.norm(np.array(coord1) - np.array(coord2)) < tol
 
-    def find_point_index_in_master_coords(master_coords, coord, tol=0.01):
-        """Find the index of a coordinate in master_coords, considering tolerance."""
+    def find_point_coords(master_coords, coord, tol=0.01): # changed name
+        """Find the index of a coordinate in master_coords, considering
+        tolerance."""
         for idx, master_coord in enumerate(master_coords):
             if is_close(master_coord, coord, tol):
                 return idx
-        return None  
-
+        return None
 
     print('*** Combining centerlines ***')
     master_coords = []
@@ -1172,22 +1253,23 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
     new_dict_cell_points = [0]*len(dict_cell)
     new_dict_cell_edges = [0]*len(dict_cell)
 
-    
     for i in range(len(dict_cell)):
-        if i == 0: # using the first cl as ground to grow
+        if i == 0:  # using the first cl as ground to grow
             length = len(master_coords)
             master_coords.extend(dict_cell[i][1])
             addition = len(master_coords) - length
-            edges = create_edges(length,length+addition-1)
+            edges = create_edges(length, length+addition-1)
             master_edges.extend(edges)
-            temp_pd = create_polydata_from_edges(master_edges,create_vtkpoints_from_coordinates(master_coords))
+            temp_pd = create_polydata_from_edges(master_edges,
+                    create_vtkpoints_from_coordinates(master_coords))
+            
             # prepare to update dict_cell
             new_dict_cell_pd[i] = temp_pd
             new_dict_cell_points[i] = dict_cell[i][1]
             new_dict_cell_edges[i] = edges
 
             print(f"Done with centerline {i}")
-            #write_polydata(temp_pd, 'c:\\Users\\bygan\\Documents\\Research_at_Cal\\Shadden_lab_w_Numi\\2024_spring\\cl0.vtp')
+
         else:
             # GALA CHANGE: mine are not backwards
             backward_cl = dict_cell[i][1][::1]
@@ -1197,15 +1279,17 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
             for j in range(len(backward_cl)):
                 coord = backward_cl[j]
 
-                closest_point = findclosestpoint(temp_pd,coord)
-               
+                closest_point = findclosestpoint(temp_pd, coord)
+   
                 # when the other line gets close to the existing line, stop
-                if np.linalg.norm(np.array(coord) - np.array(closest_point)) < tolerance:
+                if np.linalg.norm(np.array(coord) -
+                                  np.array(closest_point)) < tolerance:
                     # find the index of the closest point
                     coords_to_add.append(coord)
                     count_addition += 1
-                    index_for_connecting_pt = find_point_index_in_master_coords(master_coords,closest_point)
-                    print(f"index_for_connecting_pt: {index_for_connecting_pt}, therefore this edge is [{index_for_connecting_pt},{len(master_coords)}]")
+                    index_for_connecting_pt = find_point_coords(master_coords, closest_point)
+                    print(f"index_for_connecting_pt: {index_for_connecting_pt},
+                           therefore this edge is [{index_for_connecting_pt},{len(master_coords)}]")
                     if index_for_connecting_pt is None:
                         print("warning: closest point not found. something must be wrong")
                     break
@@ -1214,30 +1298,28 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
                     count_addition += 1
             # flip coords_to_add so that it follows flow direction
             coords_to_add = coords_to_add[::-1]
-            
+
             # create edges: first coords is the bifurcation
-            edges = create_edges(len(master_coords),len(master_coords)+count_addition-1)
-            #edges.insert(0,[index_for_connecting_pt,len(master_coords)])
-            
+            edges = create_edges(len(master_coords), len(master_coords)+count_addition-1)
+
+
             # add to master_coords
             master_coords.extend(coords_to_add)
             master_edges.extend(edges)
-            temp_pd = create_polydata_from_edges(master_edges,create_vtkpoints_from_coordinates(master_coords))
-            #write_polydata(temp_pd, f'c:\\Users\\bygan\\Documents\\Research_at_Cal\\Shadden_lab_w_Numi\\2024_spring\\cl{i}.vtp')
+            temp_pd = create_polydata_from_edges(master_edges, create_vtkpoints_from_coordinates(master_coords))
+
             print(f"Done with centerline {i}")
-            #pdb.set_trace()
+
             # save to new dict_cell 
             for k in range(len(new_dict_cell_points)):
                 if master_coords[index_for_connecting_pt] in new_dict_cell_points[k]:
                     
-
                     new_dict_cell_points[i] = new_dict_cell_points[k][0:new_dict_cell_points[k].index(master_coords[index_for_connecting_pt])+1]+coords_to_add
                     new_dict_cell_edges[i] = new_dict_cell_edges[k][0:new_dict_cell_points[k].index(master_coords[index_for_connecting_pt])]+edges
                     new_dict_cell_pd[i] = create_polydata_from_edges(new_dict_cell_edges[i],create_vtkpoints_from_coordinates(new_dict_cell_points[i]))
                     
                     break
     
-    # pdb.set_trace()
     points = vtk.vtkPoints()
     for coord in master_coords:
         points.InsertNextPoint(coord)
@@ -1321,30 +1403,40 @@ def remove_lines_from_vtp(input_vtp_path, output_vtp_path, cells_to_remove):
 
 def main(mesh_path, save_dir, geometry_type=None, pointsource=None):
 
-
     # import the mesh
     domain = import_mesh(mesh_path)
     _, _, edgeavg = edge_max(domain)
 
-    # Solve the initial eikonal equation
+    # Solve for the distance field
     dis = solve_eikonal(domain, 1, 1, 1)
-    export_vtk(save_dir + "/eikonal/dis_map.vtu", dis)
+    export_vtk(save_dir + "/eikonal/dis_map.vtu", dis) # this must be saved for the next step
 
-    # Handle point source input
+    # Handle point source input. If no point source was selected, 
+    # ask the user to input one. If the user still doesn't want to
+    # provide one, then it will be automatically selected.
     if pointsource is None:
-        user_input = input("The 'manual_ps' is missing. Please enter a point source (open the distance field and select id of the node you want): ")
-        if user_input.strip() == "":
-            point_index = automatic_pointsource(dis)
-            print("No point source selected; automatically selecting point source.")
-        else:
-            point_index = int(user_input)
+        while True:
+            user_input = input("The 'manual_ps' is missing. Please enter a point source (open the distance field and select id of the node you want): ")
+            if user_input.strip() == "":
+                point_index = automatic_pointsource(dis)
+                print("No point source selected; automatically selecting point source.")
+                break
+            else:
+                try:
+                    point_index = int(user_input)
+                    break  # Exit the loop if the input is a valid integer
+                except ValueError:
+                    print("Invalid input. Please enter an integer value.")
     else:
         point_index = pointsource
 
-    # Solve the eikonal equation with the modified speed
+    # Now propagate a moderate speed wave. This is the first step to identify
+    # the extreme nodes (or outlets of the geometry)
     dtf_mod_speed = solve_eikonal(domain, 2, 1, point_index, dis)
 
-    # Handle geometry type input
+    # Handle geometry type input. If the user doesn't specify a geometry type,
+    # ask the user to input one. If the user still doesn't want to provide one,
+    # then it will be randomly selected.
     if geometry_type is None:
         valid_types = ["aorta", "pulm", "cere", "coro"]
         while True:
@@ -1358,29 +1450,43 @@ def main(mesh_path, save_dir, geometry_type=None, pointsource=None):
             else:
                 print("Error: Invalid input. Please enter one of the following options: aorta, pulm, cere, coro.")
 
-    # Perform clustering and rescaling
+    # Perform clustering based on the destination time field
     cluster_graph = discritize_dtf(dtf_mod_speed, domain, geometry_type)
     cluster_separate = separate_clusters(domain, cluster_graph, 30)
+    # cluster map doesn't need to be saved
     export_xdmf(save_dir + "/cluster/cluster_map.xdmf", domain, cluster_separate)
+
+    # Rescale the distance map based on the cluster radii. This will ensure that
+    # the center of the vessel is ~1 throughout the geometry regardless of the
+    # diameter of the vessel. This helps ensure the centerlines are traced as
+    # accurately as possible.
     rescale_dis = rescale_distance_map(domain, cluster_separate, dis)
+    # rescaled distance field doesn't need to be saved
     export_xdmf(save_dir + "/eikonal/rescale_dis_map.xdmf", domain, rescale_dis)
 
-    # Find extreme nodes
+    # Find extreme nodes by looking through the nodes of the surface of the mesh
+    # and finding all the nodes that have highest destination time values
+    # out of their immediate neighbors
     extreme_nodes, _ = gala_extreme_nodes(domain, dtf_mod_speed, edgeavg * 4)
 
     # Solve the eikonal equation for the destination time field
     point_dtf_map = solve_eikonal(domain, 2, 3, point_index, rescale_dis)
     export_vtk(save_dir + "/eikonal/destination_time.vtu", point_dtf_map)
 
-    # Combine centerlines
+    # Combine all individual centerlines from the extreme nodes (outlets) into a 
+    # single polydata
     centerline_polydata = combine_cl(domain, extreme_nodes, cluster_separate, save_dir + "/eikonal/destination_time_p0_000000.vtu", save_dir + "/eikonal/dis_map_p0_000000.vtu", geometry_type)
+    # Don't need to save the un-merged, un-smooth centerline
     save_centerline_vtk(centerline_polydata, save_dir + "/centerlines/centerline.vtp")
+
+    # These are the steps for merging individual centerlines that overlap
     _, dict_cell = create_dict(centerline_polydata)
     tolerance = get_subdivided_cl_spacing(dict_cell)
     smooth_centerline_polydata, _, _, _ = combine_cls_into_one_polydata(dict_cell, tolerance / 2)
+    # This is the final centerline (before deletion of extra centerlines according to user)
     save_centerline_vtk(smooth_centerline_polydata, save_dir + "/centerlines/smooth_centerline.vtp")
 
-    # Save extreme nodes information
+    # Save extreme nodes information. This is not necessary
     with open(save_dir + "/extreme_nodes.txt", "w") as file:
         file.write(f"There are {len(extreme_nodes)} extreme nodes: {extreme_nodes}.")
         file.close()
@@ -1399,8 +1505,8 @@ def main(mesh_path, save_dir, geometry_type=None, pointsource=None):
                     cells_to_remove = [int(i.strip()) for i in cells_to_remove.split(",")]
 
                     print(f"Removing cells with indices: {cells_to_remove}")
-                    output_vtp_path = save_dir + "/smooth_centerline.vtp"
-                    remove_lines_from_vtp(save_dir + "/smooth_centerline.vtp", output_vtp_path, cells_to_remove)
+                    output_vtp_path = save_dir + "/centerlines/smooth_centerline.vtp"
+                    remove_lines_from_vtp(save_dir + "/centerlines/smooth_centerline.vtp", output_vtp_path, cells_to_remove)
                     print(f"Modified centerline saved to {output_vtp_path}")
                     break
                 except ValueError:
@@ -1408,6 +1514,7 @@ def main(mesh_path, save_dir, geometry_type=None, pointsource=None):
             break
         else:
             print("Invalid response. Please enter 'yes' or 'no'.")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process centerline tracing.")
@@ -1418,4 +1525,3 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args.mesh_path, args.save_dir, args.geometry_type, args.pointsource)
-
