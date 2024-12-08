@@ -2,7 +2,7 @@
 Contributed by Gala Sanchez Van Moer (galasvm@berkeley.edu)
 
 python tracingcenterlines.py mesh/directory/name.xdmf save/directory --geometry_type aorta --pointsource 2
-python tracingcenterlines.py /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/Meshes/demomesh/demomesh.xdmf /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/11222024 --geometry_type aorta 
+python tracingcenterlines.py /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/exported_volume_mesh.xdmf /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/12082024/tetwild_trial/numisurface --geometry_type aorta 
 '''
 
 try:
@@ -176,7 +176,7 @@ def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
     if f_type == 1:  # Steady speed
         f = fem.Constant(domain, default_scalar_type(1))
     elif f_type == 3:  # High-speed wave (proportional to distance field)
-        f = 1 / (2 ** (20 * distance))
+        f = 1 / (np.e ** (20 * distance))
 
     # Calculate epsilon (eps) related to the mesh size
     hmax, _, _ = edge_max(domain)
@@ -1262,7 +1262,7 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
             master_edges.extend(edges)
             temp_pd = create_polydata_from_edges(master_edges,
                     create_vtkpoints_from_coordinates(master_coords))
-            
+      
             # prepare to update dict_cell
             new_dict_cell_pd[i] = temp_pd
             new_dict_cell_points[i] = dict_cell[i][1]
@@ -1288,8 +1288,7 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
                     coords_to_add.append(coord)
                     count_addition += 1
                     index_for_connecting_pt = find_point_coords(master_coords, closest_point)
-                    print(f"index_for_connecting_pt: {index_for_connecting_pt},
-                           therefore this edge is [{index_for_connecting_pt},{len(master_coords)}]")
+                    print(f"index_for_connecting_pt: {index_for_connecting_pt}, therefore this edge is [{index_for_connecting_pt},{len(master_coords)}]")
                     if index_for_connecting_pt is None:
                         print("warning: closest point not found. something must be wrong")
                     break
