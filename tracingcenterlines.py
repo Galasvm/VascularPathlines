@@ -2,7 +2,10 @@
 Contributed by Gala Sanchez Van Moer (galasvm@berkeley.edu)
 
 python tracingcenterlines.py mesh/directory/name.xdmf save/directory --geometry_type aorta --pointsource 2
-python tracingcenterlines.py /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/exported_volume_mesh.xdmf /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/12082024/tetwild_trial/numisurface --geometry_type aorta 
+python tracingcenterlines.py /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/12102024/summary_ftetwild/0079_H_PULM_H/0079_H_PULM_H.xdmf  /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/12292024/testing_tolerance/0079_H_PULM_H --geometry_type pulm --pointsource auto
+python tracingcenterlines.py /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/12282024/pulm_trial/PA000026/PA000026.xdmf /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/12302024/mergingtolerance_based_on_mesh_size/PA000026 --geometry_type pulm --pointsource auto
+python tracingcenterlines.py /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/12282024/pulm_trial/0100_A_AO_COA/0100_A_AO_COA.xdmf /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/12292024/testing_tolerance/0100_A_AO_COA --geometry_type aorta --pointsource auto
+python tracingcenterlines.py /Users/galasanchezvanmoer/Desktop/PhD_Project/numi_centerlines/Numi_surfaces/PA000027_smooth.vtp /Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/12082024/from_model_to_xdmf_run5/integration_parameters_change/numi_unsmoothed_models/pulm_monstrosity/results2 --geometry_type pulm 
 '''
 
 try:
@@ -27,6 +30,8 @@ from scipy.sparse.csgraph import connected_components
 from scipy.sparse import csr_matrix
 import os
 import argparse
+from model_to_mesh import *
+
 
 
 def import_mesh(path_name):
@@ -158,16 +163,21 @@ def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
     boundary_facets = dolfinx.cpp.mesh.exterior_facet_indices(domain.topology)
     boundary_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
                                                 boundary_facets)
+    hmax, _, _ = edge_max(domain)
 
     # Set boundary conditions based on the boundary type
     if boundary_type == 1:  # Setting 0 at the walls (for distance field)
         bc = fem.dirichletbc(default_scalar_type(0), boundary_dofs, V)
+
+
     # Setting 0 at a point source (for destination time field)
-    elif boundary_type == 2: 
+    elif boundary_type == 2:
         ps_index_array = np.array([ps_index], dtype=np.int32)
 
         # Define the Dirichlet boundary condition at one point
         bc = fem.dirichletbc(default_scalar_type(0), ps_index_array, V)
+
+
     else:
         print("error: no other boundary types")
         exit()
@@ -176,11 +186,12 @@ def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
     if f_type == 1:  # Steady speed
         f = fem.Constant(domain, default_scalar_type(1))
     elif f_type == 3:  # High-speed wave (proportional to distance field)
-        f = 1 / (np.e ** (20 * distance))
+        f = 1 / (np.e ** (10 * distance))
 
     # Calculate epsilon (eps) related to the mesh size
-    hmax, _, _ = edge_max(domain)
-    eps = hmax / 2
+    eps = hmax / 3
+    # eps = 0.2
+
     print(f"eps: {eps}")
 
     # Solve the problem using the set_problem function
@@ -787,6 +798,142 @@ def compute_gradient_vtk(path_file, path_export):
     writer.SetInputData(gradient_data)
     writer.Write()
 
+def finding_longest_streamline(all_streamlines):
+    """
+    Find the longest streamline based on the number of points.
+
+    Args:
+        all_streamlines (vtk.vtkPolyData): The vtkPolyData object containing all streamlines.
+
+    Returns:
+        int: The index of the longest streamline, or None if no valid streamline is found.
+    """
+
+    # Find the number of streamlines (cells)
+    num_cells = all_streamlines.GetNumberOfCells()
+
+    # Initialize variables to store the index of the longest streamline and the max number of points
+    max_points = -1
+    longest_streamline_index = -1  # To store the index of the longest streamline
+
+    # Iterate through all the streamlines
+    for i in range(num_cells):
+        selected_line = all_streamlines.GetCell(i)
+
+        # Check if the streamline has points
+        num_point_ids = selected_line.GetNumberOfPoints()
+
+        if num_point_ids == 0:
+            # Skip this streamline if it has no points
+            print(f"Streamline {i} has no points, skipping.")
+            continue
+
+        # If this streamline has the most points, update the max points and store the current index
+        if num_point_ids > max_points:
+            max_points = num_point_ids
+            longest_streamline_index = i
+
+    # Return the index of the longest streamline
+    if longest_streamline_index != -1:
+        return longest_streamline_index
+    else:
+        print("No valid streamline found.")
+        return None
+
+
+# def finding_best_streamline(all_streamlines, dis_map_path):
+#     """
+#     Find the best streamline traced from each outlet based on the distance map
+#     (choose the streamline with the highest distance).
+
+#     Args:
+#         all_streamlines(vtp file): The vtp file containing all streamlines.
+#         dis_map_path (str): Path to the VTK file containing the distance map.
+
+#     Returns:
+#         int: The index of the best streamline, or None if no valid streamline
+#         is found.
+#     """
+
+#     # Find the number of streamlines (cells)
+#     num_cells = all_streamlines.GetNumberOfCells()
+
+#     # Read the distance map from the VTK file
+#     reader = vtk.vtkXMLUnstructuredGridReader()
+#     reader.SetFileName(dis_map_path)
+#     reader.Update()
+
+#     # Get the unstructured grid (mesh) from the reader
+#     mesh = reader.GetOutput()
+
+#     # Create a probe filter to interpolate the solution at arbitrary points
+#     probe = vtk.vtkProbeFilter()
+#     points_polydata = vtk.vtkPolyData()
+
+#     # Create a vtkPoints object for specific points
+#     input_points = vtk.vtkPoints()
+
+#     # Initialize variables to store the index of the best streamline and the 
+#     # max distance
+#     max_distance = -float("inf")
+#     best_streamline_index = -1  # To store the index of the best streamline
+
+#     # Iterate through all the streamlines
+#     for i in range(num_cells):
+#         selected_line = all_streamlines.GetCell(i)
+
+#         # Check if the streamline has points
+#         num_point_ids = selected_line.GetNumberOfPoints()
+#         point_id = selected_line.GetPointId(0)
+
+#         if num_point_ids == 0:
+#             # Skip this streamline if it has no points
+#             print(f"Streamline {i} has no points, skipping.")
+#             continue
+
+#         # Get the first point of the streamline
+#         point = all_streamlines.GetPoint(point_id)
+#         input_points.InsertNextPoint(point)
+
+#         # Interpolate the distance field for the current point
+#         points_polydata.SetPoints(input_points)
+#         probe.SetInputData(points_polydata)
+#         probe.SetSourceData(mesh)
+#         probe.Update()
+#         interpolated_data = probe.GetOutput()
+
+#         # Access the interpolated distance field using the correct name 'f'
+#         distance_array = interpolated_data.GetPointData().GetArray("f")
+
+#         if distance_array is None:
+#             print(f"Error: Could not find the 'distance_field' array for streamline {i}.")
+#             continue
+
+#         # Get the distance value at this point
+#         distance_value = distance_array.GetValue(0)
+
+#         # If this distance is the highest, update the max distance and store
+#         # the current index
+#         if distance_value > max_distance:
+#             max_distance = distance_value
+#             # Store the index of the current streamline
+#             best_streamline_index = i
+
+#         # Clear points for the next iteration
+#         input_points.Reset()
+
+#     # Return the index of the best streamline and its associated max distance
+#     if best_streamline_index != -1:
+#         selected_line = all_streamlines.GetCell(best_streamline_index)
+#         num_point_ids = selected_line.GetNumberOfPoints()
+#         point_id = selected_line.GetPointId(0)
+#         point = all_streamlines.GetPoint(point_id)
+#         return best_streamline_index, point
+#     else:
+#         print("No valid streamline found.")
+#         return None
+
+
 
 def finding_best_streamline(all_streamlines, dis_map_path):
     """
@@ -853,7 +1000,7 @@ def finding_best_streamline(all_streamlines, dis_map_path):
         distance_array = interpolated_data.GetPointData().GetArray("f")
 
         if distance_array is None:
-            print(f"Error: Could not find the 'f' array for streamline {i}.")
+            print(f"Error: Could not find the 'distance_field' array for streamline {i}.")
             continue
 
         # Get the distance value at this point
@@ -926,7 +1073,7 @@ def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path,
 
     # Set seed points for the stream tracer
     seed_points = vtk.vtkPointSource()
-    seed_points.SetRadius(radius) 
+    seed_points.SetRadius(radius)
     seed_points.SetNumberOfPoints(100)  # number of seed points
     seed_points.SetCenter(start_point)  # Center at start_point
     seed_points.Update()
@@ -936,10 +1083,8 @@ def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path,
     # Set integration parameters
     streamTracer.SetIntegratorTypeToRungeKutta4()
     streamTracer.SetInterpolatorTypeToDataSetPointLocator()
-    streamTracer.SetMaximumPropagation(500)
+    streamTracer.SetMaximumPropagation(50000) # GALA CHANGED FROM 500 ON 12082024
     streamTracer.SetInitialIntegrationStep(0.2)
-    streamTracer.SetMinimumIntegrationStep(0.01)
-    streamTracer.SetMaximumIntegrationStep(0.5)
     streamTracer.SetIntegrationDirectionToBackward()
 
     # Update and get streamlines
@@ -956,7 +1101,11 @@ def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path,
         return streamlines, streamlines  # Return the only streamline
 
     # Find the best streamline based on the distance map
-    id_best_streamline = finding_best_streamline(streamlines, dis_map_path)
+    # id_best_streamline = finding_best_streamline(streamlines, dis_map_path) #GALA CHANGE BACK!!!
+    id_best_streamline = finding_longest_streamline(streamlines)
+    
+    # id_best_streamline, point_coords = finding_best_streamline(streamlines, dis_map_path)
+
     selected_cell = streamlines.GetCell(id_best_streamline)
 
     # Extract the selected line and its points
@@ -983,8 +1132,18 @@ def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path,
     selected_polydata.SetPoints(selected_points)
     selected_polydata.SetLines(selected_lines)
 
+    # Use vtkCleanPolyData to remove duplicate points
+    cleaner = vtk.vtkCleanPolyData()
+    cleaner.SetInputData(selected_polydata)
+    cleaner.SetToleranceIsAbsolute(True)  # Use absolute tolerance
+    cleaner.SetAbsoluteTolerance(0.02)   # Set the minimum distance
+    cleaner.Update()
+
+    # The cleaned polydata
+    cleaned_polydata = cleaner.GetOutput()
+
     # Return both all streamlines and the selected one
-    return streamlines, selected_polydata
+    return streamlines, cleaned_polydata#, point_coords
 
 
 def merge_centerline_segments(centerline):
@@ -1038,7 +1197,7 @@ def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path,
 
     # Find the coordinates of the mesh nodes
     coordinates = mesh.geometry.x
-    
+
     # Find the indices for the first cluster (where we shouldn't have any
     # extreme nodes)
     cluster_indices = np.where(cluster_map.x.array == 0)[0]
@@ -1058,16 +1217,18 @@ def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path,
     # Compute the gradient of the distance-to-feature solution
     compute_gradient_vtk(dtf_sol_path, dtf_sol_path + "grad_dtf.vtu")
 
+    # coords_final_dofs = []
     for j in range(len(extreme_nodes_filtered)):
         # Get the coordinates of the current extreme node
         start_pt = coordinates[extreme_nodes_filtered[j]]
 
         # Trace the centerline from the current extreme node
+        # CHANGE THE COORD THER TOO 01172025
         _, polydata = trace_centerline_vtk(dtf_sol_path + "grad_dtf.vtu",
                                            start_pt,
                                            dis_map_path,
                                            geometry_type)
-
+        # coords_final_dofs.append(coord) #MIGHT NEED TO DELETE 01172025
         # Append the vessel points to the combined centerline
         for i in range(polydata.GetNumberOfPoints()):
             point = polydata.GetPoint(i)
@@ -1093,7 +1254,7 @@ def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path,
     combined_centerline_polydata.SetPoints(combined_centerline_points)
     combined_centerline_polydata.SetLines(combined_centerline_lines)
 
-    return combined_centerline_polydata
+    return combined_centerline_polydata#, coords_final_dofs
 
 
 """
@@ -1211,7 +1372,133 @@ def get_subdivided_cl_spacing(dict_cell):
 
 # modified Bryan's function (no radii) and changed the direction of cl
 
-def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
+# def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
+#     """
+#     combine all centerlines into one polydata with the right
+#     connectivity/direction
+#     IMPORTANT: if subdivide factor change, tolerance should be adjusted!!
+#     """
+#     # dict_cell: {0: [polydata,pts], 1: [polydata,pts], ...}
+#     # first take the longest centerline and create a vtpPoint
+#     # then, in the next centerline, start from the endpoint/target
+#     # and go back to existing line and stop when it reaches a tolerance
+#     def create_edges(starting_num, ending_num):
+#         """
+#         create a list of edges from starting_num to ending_num
+#         eg, starting_num = 0, ending_num = 10
+#         edges = [[0,1],[1,2],...,[9,10]]
+#         """
+#         edges = []
+#         for i in range(starting_num, ending_num):
+#             edges.append([i, i+1])
+#         return edges
+
+#     def is_close(coord1, coord2, tol=0.1):
+#         """Helper function to compare coordinates with a tolerance."""
+#         return np.linalg.norm(np.array(coord1) - np.array(coord2)) < tol
+
+#     def find_point_coords(master_coords, coord, tol=0.01): # changed name
+#         """Find the index of a coordinate in master_coords, considering
+#         tolerance."""
+#         for idx, master_coord in enumerate(master_coords):
+#             if is_close(master_coord, coord, tol):
+#                 return idx
+#         return None
+
+#     print('*** Combining centerlines ***')
+#     master_coords = []
+#     master_edges = []
+
+#     temp_pd = vtk.vtkPolyData()
+#     new_dict_cell_pd = [0]*len(dict_cell)
+#     new_dict_cell_points = [0]*len(dict_cell)
+#     new_dict_cell_edges = [0]*len(dict_cell)
+
+#     for i in range(len(dict_cell)):
+#         if i == 0:  # using the first cl as ground to grow
+#             length = len(master_coords)
+#             master_coords.extend(dict_cell[i][1])
+#             addition = len(master_coords) - length
+#             edges = create_edges(length, length+addition-1)
+#             master_edges.extend(edges)
+#             temp_pd = create_polydata_from_edges(master_edges,
+#                     create_vtkpoints_from_coordinates(master_coords))
+      
+#             # prepare to update dict_cell
+#             new_dict_cell_pd[i] = temp_pd
+#             new_dict_cell_points[i] = dict_cell[i][1]
+#             new_dict_cell_edges[i] = edges
+
+#             print(f"Done with centerline {i}")
+
+#         else:
+#             # GALA CHANGE: mine are not backwards
+#             backward_cl = dict_cell[i][1][::1]
+#             coords_to_add = []
+
+#             count_addition = 0
+#             for j in range(len(backward_cl)):
+#                 coord = backward_cl[j]
+
+#                 closest_point = findclosestpoint(temp_pd, coord)
+   
+#                 # when the other line gets close to the existing line, stop
+#                 if np.linalg.norm(np.array(coord) -
+#                                   np.array(closest_point)) < tolerance:
+#                     # find the index of the closest point
+#                     coords_to_add.append(coord)
+#                     count_addition += 1
+#                     index_for_connecting_pt = find_point_coords(master_coords, closest_point)
+#                     print(f"index_for_connecting_pt: {index_for_connecting_pt}, therefore this edge is [{index_for_connecting_pt},{len(master_coords)}]")
+#                     if index_for_connecting_pt is None:
+#                         print("warning: closest point not found. something must be wrong")
+#                     break
+#                 else:
+#                     coords_to_add.append(coord)
+#                     count_addition += 1
+
+#             # flip coords_to_add so that it follows flow direction
+#             coords_to_add = coords_to_add[::-1]
+
+#             # create edges: first coords is the bifurcation
+#             edges = create_edges(len(master_coords), len(master_coords)+count_addition-1)
+
+
+#             # add to master_coords
+#             master_coords.extend(coords_to_add)
+#             master_edges.extend(edges)
+#             temp_pd = create_polydata_from_edges(master_edges, create_vtkpoints_from_coordinates(master_coords))
+
+#             print(f"Done with centerline {i}")
+
+#             # save to new dict_cell 
+#             for k in range(len(new_dict_cell_points)):
+#                 if master_coords[index_for_connecting_pt] in new_dict_cell_points[k]:
+
+#                     new_dict_cell_points[i] = new_dict_cell_points[k][0:new_dict_cell_points[k].index(master_coords[index_for_connecting_pt])+1]+coords_to_add
+#                     new_dict_cell_edges[i] = new_dict_cell_edges[k][0:new_dict_cell_points[k].index(master_coords[index_for_connecting_pt])]+edges
+#                     new_dict_cell_pd[i] = create_polydata_from_edges(new_dict_cell_edges[i],create_vtkpoints_from_coordinates(new_dict_cell_points[i]))
+
+#                     break
+
+#     points = vtk.vtkPoints()
+#     for coord in master_coords:
+#         points.InsertNextPoint(coord)
+
+#     pd_pre = create_polydata_from_edges(master_edges,points)
+#     pd = merge_centerline_segments(pd_pre) #GALA ADDED THIS TO MAKE EACH CELL A SINGLE CENTERLINE
+#     #write_polydata(pd, save_dir+'edge_created_combined_cl.vtp')
+#     # recreate dict_cell from what we have
+#     dict_cell = {}
+#     for i in range(len(new_dict_cell_pd)):
+#         dict_cell[i] = [new_dict_cell_pd[i],new_dict_cell_points[i]]
+
+#     # pdb.set_trace()
+    
+#     return pd, master_coords, master_edges, dict_cell
+
+
+def combine_cls_into_one_polydata(dict_cell, tolerance=0.05, clean=False):
     """
     combine all centerlines into one polydata with the right
     connectivity/direction
@@ -1276,14 +1563,15 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
             coords_to_add = []
 
             count_addition = 0
+            found_close_point = False  # Flag to track if any point is within tolerance
+
             for j in range(len(backward_cl)):
                 coord = backward_cl[j]
 
                 closest_point = findclosestpoint(temp_pd, coord)
    
                 # when the other line gets close to the existing line, stop
-                if np.linalg.norm(np.array(coord) -
-                                  np.array(closest_point)) < tolerance:
+                if np.linalg.norm(np.array(coord) - np.array(closest_point)) < tolerance:
                     # find the index of the closest point
                     coords_to_add.append(coord)
                     count_addition += 1
@@ -1291,16 +1579,23 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
                     print(f"index_for_connecting_pt: {index_for_connecting_pt}, therefore this edge is [{index_for_connecting_pt},{len(master_coords)}]")
                     if index_for_connecting_pt is None:
                         print("warning: closest point not found. something must be wrong")
+                    found_close_point = True  # Set the flag to True
                     break
                 else:
                     coords_to_add.append(coord)
                     count_addition += 1
+
+            # If no close point was found, skip adding this line
+            if clean and not found_close_point:
+                # if not found_close_point:
+                print(f"No close point found for centerline {i}, skipping this line.")
+                continue
+
             # flip coords_to_add so that it follows flow direction
             coords_to_add = coords_to_add[::-1]
 
             # create edges: first coords is the bifurcation
             edges = create_edges(len(master_coords), len(master_coords)+count_addition-1)
-
 
             # add to master_coords
             master_coords.extend(coords_to_add)
@@ -1309,32 +1604,30 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05):
 
             print(f"Done with centerline {i}")
 
-            # save to new dict_cell 
-            for k in range(len(new_dict_cell_points)):
-                if master_coords[index_for_connecting_pt] in new_dict_cell_points[k]:
-                    
-                    new_dict_cell_points[i] = new_dict_cell_points[k][0:new_dict_cell_points[k].index(master_coords[index_for_connecting_pt])+1]+coords_to_add
-                    new_dict_cell_edges[i] = new_dict_cell_edges[k][0:new_dict_cell_points[k].index(master_coords[index_for_connecting_pt])]+edges
-                    new_dict_cell_pd[i] = create_polydata_from_edges(new_dict_cell_edges[i],create_vtkpoints_from_coordinates(new_dict_cell_points[i]))
-                    
-                    break
-    
+            # save to new dict_cell GALA TURNED THIS OFFFFFFFF 01022025
+            # for k in range(len(new_dict_cell_points)):
+            #     if master_coords[index_for_connecting_pt] in new_dict_cell_points[k]:
+            #         new_dict_cell_points[i] = new_dict_cell_points[k][0:new_dict_cell_points[k].index(master_coords[index_for_connecting_pt])+1]+coords_to_add
+            #         new_dict_cell_edges[i] = new_dict_cell_edges[k][0:new_dict_cell_points[k].index(master_coords[index_for_connecting_pt])]+edges
+            #         new_dict_cell_pd[i] = create_polydata_from_edges(new_dict_cell_edges[i],create_vtkpoints_from_coordinates(new_dict_cell_points[i]))
+            #         break
+
     points = vtk.vtkPoints()
     for coord in master_coords:
         points.InsertNextPoint(coord)
-    
-    pd_pre = create_polydata_from_edges(master_edges,points)
-    pd = merge_centerline_segments(pd_pre) #GALA ADDED THIS TO MAKE EACH CELL A SINGLE CENTERLINE
-    #write_polydata(pd, save_dir+'edge_created_combined_cl.vtp')
-    # recreate dict_cell from what we have
-    dict_cell = {}
-    for i in range(len(new_dict_cell_pd)):
-        dict_cell[i] = [new_dict_cell_pd[i],new_dict_cell_points[i]]
 
+    pd_pre = create_polydata_from_edges(master_edges,points)
+    pd = merge_centerline_segments(pd_pre) # GALA ADDED THIS TO MAKE EACH CELL A SINGLE CENTERLINE
+    # write_polydata(pd, save_dir+'edge_created_combined_cl.vtp')
+    # recreate dict_cell from what we have
+    # GALA TURNED OFF THE DICT CELL###############
+    # dict_cell = {}
+    # for i in range(len(new_dict_cell_pd)):
+    #     dict_cell[i] = [new_dict_cell_pd[i],new_dict_cell_points[i]]
+    #########################`#######################
     # pdb.set_trace()
     
-    return pd, master_coords, master_edges, dict_cell
-
+    return pd, master_coords, master_edges#, dict_cell
 
 def remove_lines_from_vtp(input_vtp_path, output_vtp_path, cells_to_remove):
     """
@@ -1361,11 +1654,11 @@ def remove_lines_from_vtp(input_vtp_path, output_vtp_path, cells_to_remove):
 
     # Convert cells_to_remove to a set for quick lookup
     cells_to_remove_set = set(cells_to_remove)
-    
+
     # Create a new vtkPolyData to store the cells to keep
     cells_to_keep = vtk.vtkPolyData()
     cells_to_keep.DeepCopy(polydata)
-    
+
     # Iterate over cells and keep those not in cells_to_remove
     cell_ids = vtk.vtkIdTypeArray()
     cell_ids.SetName("vtkOriginalCellIds")
@@ -1399,128 +1692,505 @@ def remove_lines_from_vtp(input_vtp_path, output_vtp_path, cells_to_remove):
     writer.SetInputData(geometry_filter.GetOutput())
     writer.Write()
 
+from vtk.util import numpy_support
 
-def main(mesh_path, save_dir, geometry_type=None, pointsource=None):
+# this is the original one!!
+# def cl_distance_field(cl, dis_field_path, output_vtp_file):
+#     """
+#     Add the distance field values to the centerline points and write the updated file
+
+#     Args:
+#         cl (vtp): centerline vtp file
+#         dis_field_map (path): distance field path to vtu file
+#         output_vtp_file (vtp): output centerline vtp file with distance field values added
+
+#     """
+#     # Use vtkProbeFilter to interpolate distance values at centerline points
+#     reader = vtk.vtkXMLUnstructuredGridReader()
+#     reader.SetFileName(dis_field_path)
+#     reader.Update()
+#     dis_field_map = reader.GetOutput()
+
+#     probe_filter = vtk.vtkProbeFilter()
+#     probe_filter.SetInputData(cl)
+#     probe_filter.SetSourceData(dis_field_map)
+#     probe_filter.Update()
+    
+#     # Get the distance array
+#     distance_array = probe_filter.GetOutput().GetPointData().GetArray("f")
+    
+#     # Add the distance array to the centerline's point data
+#     cl.GetPointData().AddArray(distance_array)
+    
+#     # Write the updated centerline to a VTP file
+#     writer = vtk.vtkXMLPolyDataWriter()
+#     writer.SetFileName(output_vtp_file)
+#     writer.SetInputData(cl)
+#     writer.Write()
+    
+#     return distance_array
+
+
+def cl_distance_field(cl, eps, dis_field_map, output_vtp_file):
+    """
+    Add the distance field values to the centerline points and write the updated file
+
+    Args:
+        cl (vtp): centerline vtp file
+        dis_field_map (path): distance field path to vtu file
+        output_vtp_file (vtp): output centerline vtp file with distance field values added
+
+    """
+    # Use vtkProbeFilter to interpolate distance values at centerline points
+    reader = vtk.vtkXMLUnstructuredGridReader()
+    reader.SetFileName(dis_field_map)
+    reader.Update()
+    dis_field_map = reader.GetOutput()
+
+    # Use vtkProbeFilter to interpolate distance values at centerline points
+    probe_filter = vtk.vtkProbeFilter()
+    probe_filter.SetInputData(cl)
+    probe_filter.SetSourceData(dis_field_map)
+    probe_filter.Update()
+    
+    # Get the distance array
+    distance_array = probe_filter.GetOutput().GetPointData().GetArray("f")
+    
+    # Convert the distance array to a NumPy array for manipulation
+    distance_values = numpy_support.vtk_to_numpy(distance_array)
+    
+    # Apply the transformation to each value
+    transformed_values = 1.205 * distance_values + 1.074 * eps + 0.011
+    
+    # Convert the transformed values back to a VTK array
+    transformed_array = numpy_support.numpy_to_vtk(transformed_values)
+    transformed_array.SetName("MaximumInscribedSphereRadius")
+    
+    # Add the transformed array to the centerline's point data
+    cl.GetPointData().AddArray(transformed_array)
+    
+    # Write the updated centerline to a VTP file
+    writer = vtk.vtkXMLPolyDataWriter()
+    writer.SetFileName(output_vtp_file)
+    writer.SetInputData(cl)
+    writer.Write()
+    
+    return transformed_array
+
+
+def main_(model_path, save_dir, geometry_type=None, pointsource=None, remove_extra_centerlines=False):
+
+    main(model_path, save_dir)
+
+    # import the mesh
+    domain = import_mesh(save_dir+".xdmf")
+    edgemax, _, edgeavg = edge_max(domain)
+
+    # Solve for the distance field
+    dis = solve_eikonal(domain, 1, 1, 1)
+    export_vtk(save_dir + "/eikonal/dis_map.vtu", dis) # this must be saved for the next step
+    
+    with open(save_dir + "/eikonal/eps.txt", "w") as file:
+        file.write(f"eps: {edgemax/3}")
+        file.close()
+
+    # # Handle point source input. If no point source was selected, 
+    # # ask the user to input one. If the user still doesn't want to
+    # # provide one, then it will be automatically selected.
+    # if pointsource is None:
+    #     while True:
+    #         user_input = input("The 'manual_ps' is missing. Please enter a point source (open the distance field and select id of the node you want): ")
+    #         if user_input.strip() == "":
+    #             point_index = automatic_pointsource(dis)
+    #             print("No point source selected; automatically selecting point source.")
+    #             break
+    #         else:
+    #             try:
+    #                 point_index = int(user_input)
+    #                 break  # Exit the loop if the input is a valid integer
+    #             except ValueError:
+    #                 print("Invalid input. Please enter an integer value.")
+    # elif pointsource == "auto":
+    #     point_index = automatic_pointsource(dis)
+    #     print("Automatically selecting point source.")
+    # else:
+    #     point_index = pointsource
+
+    # # Now propagate a moderate speed wave. This is the first step to identify
+    # # the extreme nodes (or outlets of the geometry)
+    # dtf_mod_speed = solve_eikonal(domain, 2, 1, point_index, dis)
+
+    # # Handle geometry type input. If the user doesn't specify a geometry type,
+    # # ask the user to input one. If the user still doesn't want to provide one,
+    # # then it will be randomly selected.
+    # if geometry_type is None:
+    #     valid_types = ["aorta", "pulm", "cere", "coro"]
+    #     while True:
+    #         geometry_type = input("The 'type' is missing. Please enter a geometry type name [aorta/pulm/cere/coro]: ").strip().lower()
+    #         if geometry_type == "":
+    #             geometry_type = "cere"
+    #             print("Warning: No geometry type selected, automatically selecting cerebral. Results might not be as accurate.")
+    #             break
+    #         elif geometry_type in valid_types:
+    #             break  # Exit the loop if the input is valid
+    #         else:
+    #             print("Error: Invalid input. Please enter one of the following options: aorta, pulm, cere, coro.")
+
+    # # Perform clustering based on the destination time field
+    # cluster_graph = discritize_dtf(dtf_mod_speed, domain, geometry_type)
+    # cluster_separate = separate_clusters(domain, cluster_graph, 30)
+    # # cluster map doesn't need to be saved
+    # export_xdmf(save_dir + "/cluster/cluster_map.xdmf", domain, cluster_separate)
+
+    # # Rescale the distance map based on the cluster radii. This will ensure that
+    # # the center of the vessel is ~1 throughout the geometry regardless of the
+    # # diameter of the vessel. This helps ensure the centerlines are traced as
+    # # accurately as possible.
+    # rescale_dis = rescale_distance_map(domain, cluster_separate, dis)
+    # # rescaled distance field doesn't need to be saved
+    # export_xdmf(save_dir + "/eikonal/rescale_dis_map.xdmf", domain, rescale_dis)
+
+    # # Find extreme nodes by looking through the nodes of the surface of the mesh
+    # # and finding all the nodes that have highest destination time values
+    # # out of their immediate neighbors
+    # extreme_nodes, _ = gala_extreme_nodes(domain, dtf_mod_speed, edgeavg * 4)
+
+    # # Solve the eikonal equation for the destination time field
+    # point_dtf_map = solve_eikonal(domain, 2, 3, point_index, rescale_dis)
+    # export_vtk(save_dir + "/eikonal/destination_time.vtu", point_dtf_map)
+
+    # # Combine all individual centerlines from the extreme nodes (outlets) into a 
+    # # single polydata
+    # centerline_polydata = combine_cl(domain, extreme_nodes, cluster_separate, save_dir + "/eikonal/destination_time_p0_000000.vtu", save_dir + "/eikonal/dis_map_p0_000000.vtu", geometry_type)
+    # # np.save(save_dir+".npy", coord_extreme_nodes)
+    # # Don't need to save the un-merged, un-smooth centerline
+    # save_centerline_vtk(centerline_polydata, save_dir + "/centerlines/centerline.vtp")
+
+    # # These are the steps for merging individual centerlines that overlap
+    # _, dict_cell = create_dict(centerline_polydata)
+    # tolerance = get_subdivided_cl_spacing(dict_cell)
+    # print("#############Tolerance: ##################", tolerance)
+
+    # print("edge max: ", edgemax)
+
+    # if tolerance < (edgemax/10):
+    #     tolerance = edgemax/10
+    #     print("############# New Tolerance: ##################", tolerance)
+
+    # # smooth_centerline_polydata, _, _ = combine_cls_into_one_polydata(dict_cell, tolerance / 2)
+    # smooth_clean_centerline_polydata, _, _ = combine_cls_into_one_polydata(dict_cell, tolerance / 2, True)
+
+    # # This is the final centerline (before deletion of extra centerlines according to user)
+    # # save_centerline_vtk(smooth_centerline_polydata, save_dir + "/centerlines/smooth_centerline.vtp")
+    # save_centerline_vtk(smooth_clean_centerline_polydata, save_dir + "/centerlines/smooth_clean_centerline.vtp")
+    # cl_distance_field(smooth_clean_centerline_polydata, edgemax/3, save_dir + "/eikonal/dis_map_p0_000000.vtu", save_dir + "/centerlines/smooth_clean_radius_centerline.vtp")
+
+    # # Save extreme nodes information. This is not necessary
+    # with open(save_dir + "/extreme_nodes.txt", "w") as file:
+    #     file.write(f"There are {len(extreme_nodes)} extreme nodes: {extreme_nodes}.")
+    #     file.close()
+
+    # # Ask if the user wants to remove any extra centerlines
+    # if remove_extra_centerlines:
+    #     while True:
+    #         response = input("Please visualize the centerline. Are there any extra centerlines you would like to remove? [yes/no]: ").strip().lower()
+    #         if response == "" or response == "no":
+    #             print("No lines to remove. Ending the program.")
+    #             break
+    #         elif response == "yes":
+    #             # Prompt for cell indices to remove
+    #             while True:
+    #                 try:
+    #                     cells_to_remove = input("Please enter the indexes of the lines to remove as a comma-separated list (e.g., 1, 2, 3): ")
+    #                     cells_to_remove = [int(i.strip()) for i in cells_to_remove.split(",")]
+
+    #                     print(f"Removing cells with indices: {cells_to_remove}")
+    #                     output_vtp_path = save_dir + "/centerlines/smooth_centerline.vtp"
+    #                     remove_lines_from_vtp(save_dir + "/centerlines/smooth_centerline.vtp", output_vtp_path, cells_to_remove)
+    #                     print(f"Modified centerline saved to {output_vtp_path}")
+    #                     break
+    #                 except ValueError:
+    #                     print("Invalid input. Please enter a list of integers separated by commas.")
+    #             break
+    #         else:
+    #             print("Invalid response. Please enter 'yes' or 'no'.")
+
+def centerlines_merge(model_name, save_dir, centerline_polydata, mesh_path, dis_field_path):
+    reader = vtk.vtkXMLPolyDataReader()
+    reader.SetFileName(centerline_polydata)
+    reader.Update()
+    polydata = reader.GetOutput()
+
+    domain = import_mesh(mesh_path)
+    edgemax, _, _ = edge_max(domain)
+    _, dict_cell = create_dict(polydata)
+    tolerance = get_subdivided_cl_spacing(dict_cell)
+    print("#############Tolerance: ##################", tolerance)
+
+    print("edge max: ", edgemax)
+
+    if tolerance < (edgemax/10):
+        tolerance = edgemax/10
+        print("############# New Tolerance: ##################", tolerance)
+
+    smooth_centerline_polydata, _, _ = combine_cls_into_one_polydata(dict_cell, tolerance / 2)
+    # save_centerline_vtk(smooth_centerline_polydata, save_dir + "/" + model_name + ".vtp")
+    cl_distance_field(smooth_centerline_polydata, edgemax/3, dis_field_path, save_dir + "/" + model_name + ".vtp")
+
+
+import glob
+
+def process_all_models_in_directory(directory, base_save_dir, geometry_type=None, pointsource=None, remove_extra_centerlines=False):
+    # Find all model files in the specified directory
+    model_files = glob.glob(os.path.join(directory, "*.vtp"))  # Adjust the pattern as needed
+
+    for model_file in model_files:
+        # Extract the model name without the extension
+        model_name = os.path.splitext(os.path.basename(model_file))[0]
+        
+        # Create a subdirectory for each model
+        # model_save_dir = os.path.join(base_save_dir, model_name)
+        model_save_dir = base_save_dir+"/"+model_name+"/"+model_name
+        os.makedirs(model_save_dir, exist_ok=True)
+
+        print(f"Processing model: {model_file}")
+        main_(model_file, model_save_dir, geometry_type, pointsource, remove_extra_centerlines)
+
+
+if __name__ == "__main__":
+    # Hardcode the folder and save directory
+    model_directory = "/Users/galasanchezvanmoer/Desktop/PhD_Project/VMR_now"
+    base_save_directory = "/Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/01252025/fixing_radius/second_set/centerlines/all"
+    geometry_type = "aorta"  # Example geometry type
+    pointsource = "auto"  # Example point source
+    remove_cl = False  # Example flag to remove extra centerlines
+
+    process_all_models_in_directory(model_directory, base_save_directory, geometry_type, pointsource)
+
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser(description="Process centerline tracing.")
+#     parser.add_argument("directory", type=str, help="Directory containing the model files.")
+#     parser.add_argument("save_dir", type=str, help="Directory to save the results.")
+#     parser.add_argument("--geometry_type", type=str, help="Type of geometry (e.g., aorta, pulm, cere, coro).", default=None)
+#     parser.add_argument("--pointsource", type=int, help="Index of the point source.", default=None)
+#     parser.add_argument("--remove_extra_centerlines", action="store_true", help="Flag to remove extra centerlines.")
+
+#     args = parser.parse_args()
+#     process_all_models_in_directory(args.directory, args.save_dir, args.geometry_type, args.pointsource, args.remove_extra_centerlines)
+
+
+
+def mesh_main(mesh_path, save_dir, geometry_type=None, pointsource=None, remove_extra_centerlines=False):
 
     # import the mesh
     domain = import_mesh(mesh_path)
-    _, _, edgeavg = edge_max(domain)
+    edgemax, _, edgeavg = edge_max(domain)
 
     # Solve for the distance field
     dis = solve_eikonal(domain, 1, 1, 1)
     export_vtk(save_dir + "/eikonal/dis_map.vtu", dis) # this must be saved for the next step
 
-    # Handle point source input. If no point source was selected, 
-    # ask the user to input one. If the user still doesn't want to
-    # provide one, then it will be automatically selected.
-    if pointsource is None:
-        while True:
-            user_input = input("The 'manual_ps' is missing. Please enter a point source (open the distance field and select id of the node you want): ")
-            if user_input.strip() == "":
-                point_index = automatic_pointsource(dis)
-                print("No point source selected; automatically selecting point source.")
-                break
-            else:
-                try:
-                    point_index = int(user_input)
-                    break  # Exit the loop if the input is a valid integer
-                except ValueError:
-                    print("Invalid input. Please enter an integer value.")
-    else:
-        point_index = pointsource
-
-    # Now propagate a moderate speed wave. This is the first step to identify
-    # the extreme nodes (or outlets of the geometry)
-    dtf_mod_speed = solve_eikonal(domain, 2, 1, point_index, dis)
-
-    # Handle geometry type input. If the user doesn't specify a geometry type,
-    # ask the user to input one. If the user still doesn't want to provide one,
-    # then it will be randomly selected.
-    if geometry_type is None:
-        valid_types = ["aorta", "pulm", "cere", "coro"]
-        while True:
-            geometry_type = input("The 'type' is missing. Please enter a geometry type name [aorta/pulm/cere/coro]: ").strip().lower()
-            if geometry_type == "":
-                geometry_type = "cere"
-                print("Warning: No geometry type selected, automatically selecting cerebral. Results might not be as accurate.")
-                break
-            elif geometry_type in valid_types:
-                break  # Exit the loop if the input is valid
-            else:
-                print("Error: Invalid input. Please enter one of the following options: aorta, pulm, cere, coro.")
-
-    # Perform clustering based on the destination time field
-    cluster_graph = discritize_dtf(dtf_mod_speed, domain, geometry_type)
-    cluster_separate = separate_clusters(domain, cluster_graph, 30)
-    # cluster map doesn't need to be saved
-    export_xdmf(save_dir + "/cluster/cluster_map.xdmf", domain, cluster_separate)
-
-    # Rescale the distance map based on the cluster radii. This will ensure that
-    # the center of the vessel is ~1 throughout the geometry regardless of the
-    # diameter of the vessel. This helps ensure the centerlines are traced as
-    # accurately as possible.
-    rescale_dis = rescale_distance_map(domain, cluster_separate, dis)
-    # rescaled distance field doesn't need to be saved
-    export_xdmf(save_dir + "/eikonal/rescale_dis_map.xdmf", domain, rescale_dis)
-
-    # Find extreme nodes by looking through the nodes of the surface of the mesh
-    # and finding all the nodes that have highest destination time values
-    # out of their immediate neighbors
-    extreme_nodes, _ = gala_extreme_nodes(domain, dtf_mod_speed, edgeavg * 4)
-
-    # Solve the eikonal equation for the destination time field
-    point_dtf_map = solve_eikonal(domain, 2, 3, point_index, rescale_dis)
-    export_vtk(save_dir + "/eikonal/destination_time.vtu", point_dtf_map)
-
-    # Combine all individual centerlines from the extreme nodes (outlets) into a 
-    # single polydata
-    centerline_polydata = combine_cl(domain, extreme_nodes, cluster_separate, save_dir + "/eikonal/destination_time_p0_000000.vtu", save_dir + "/eikonal/dis_map_p0_000000.vtu", geometry_type)
-    # Don't need to save the un-merged, un-smooth centerline
-    save_centerline_vtk(centerline_polydata, save_dir + "/centerlines/centerline.vtp")
-
-    # These are the steps for merging individual centerlines that overlap
-    _, dict_cell = create_dict(centerline_polydata)
-    tolerance = get_subdivided_cl_spacing(dict_cell)
-    smooth_centerline_polydata, _, _, _ = combine_cls_into_one_polydata(dict_cell, tolerance / 2)
-    # This is the final centerline (before deletion of extra centerlines according to user)
-    save_centerline_vtk(smooth_centerline_polydata, save_dir + "/centerlines/smooth_centerline.vtp")
-
-    # Save extreme nodes information. This is not necessary
-    with open(save_dir + "/extreme_nodes.txt", "w") as file:
-        file.write(f"There are {len(extreme_nodes)} extreme nodes: {extreme_nodes}.")
+    with open(save_dir + "/eikonal/eps.txt", "w") as file:
+        file.write(f"eps: {edgemax/3}")
         file.close()
+    # # Handle point source input. If no point source was selected, 
+    # # ask the user to input one. If the user still doesn't want to
+    # # provide one, then it will be automatically selected.
+    # # if pointsource is None:
+    # #     while True:
+    # #         user_input = input("The 'manual_ps' is missing. Please enter a point source (open the distance field and select id of the node you want): ")
+    # #         if user_input.strip() == "":
+    # #             point_index = automatic_pointsource(dis)
+    # #             print("No point source selected; automatically selecting point source.")
+    # #             break
+    # #         else:
+    # #             try:
+    # #                 point_index = int(user_input)
+    # #                 break  # Exit the loop if the input is a valid integer
+    # #             except ValueError:
+    # #                 print("Invalid input. Please enter an integer value.")
+    # # else:
+    # #     point_index = pointsource
 
-    # Ask if the user wants to remove any extra centerlines
-    while True:
-        response = input("Please visualize the centerline. Are there any extra centerlines you would like to remove? [yes/no]: ").strip().lower()
-        if response == "" or response == "no":
-            print("No lines to remove. Ending the program.")
-            break
-        elif response == "yes":
-            # Prompt for cell indices to remove
-            while True:
-                try:
-                    cells_to_remove = input("Please enter the indexes of the lines to remove as a comma-separated list (e.g., 1, 2, 3): ")
-                    cells_to_remove = [int(i.strip()) for i in cells_to_remove.split(",")]
+    # if pointsource is None:
+    #     while True:
+    #         user_input = input("The 'manual_ps' is missing. Please enter a point source (open the distance field and select id of the node you want): ")
+    #         if user_input.strip() == "":
+    #             point_index = automatic_pointsource(dis)
+    #             print("No point source selected; automatically selecting point source.")
+    #             break
+    #         else:
+    #             try:
+    #                 point_index = int(user_input)
+    #                 break  # Exit the loop if the input is a valid integer
+    #             except ValueError:
+    #                 print("Invalid input. Please enter an integer value.")
+    # elif pointsource == "auto":
+    #     point_index = automatic_pointsource(dis)
+    #     print("Automatically selecting point source.")
+    # else:
+    #     point_index = pointsource
 
-                    print(f"Removing cells with indices: {cells_to_remove}")
-                    output_vtp_path = save_dir + "/centerlines/smooth_centerline.vtp"
-                    remove_lines_from_vtp(save_dir + "/centerlines/smooth_centerline.vtp", output_vtp_path, cells_to_remove)
-                    print(f"Modified centerline saved to {output_vtp_path}")
-                    break
-                except ValueError:
-                    print("Invalid input. Please enter a list of integers separated by commas.")
-            break
-        else:
-            print("Invalid response. Please enter 'yes' or 'no'.")
+    # # Now propagate a moderate speed wave. This is the first step to identify
+    # # the extreme nodes (or outlets of the geometry)
+    # dtf_mod_speed = solve_eikonal(domain, 2, 1, point_index, dis)
+
+    # # Handle geometry type input. If the user doesn't specify a geometry type,
+    # # ask the user to input one. If the user still doesn't want to provide one,
+    # # then it will be randomly selected.
+    # if geometry_type is None:
+    #     valid_types = ["aorta", "pulm", "cere", "coro"]
+    #     while True:
+    #         geometry_type = input("The 'type' is missing. Please enter a geometry type name [aorta/pulm/cere/coro]: ").strip().lower()
+    #         if geometry_type == "":
+    #             geometry_type = "cere"
+    #             print("Warning: No geometry type selected, automatically selecting cerebral. Results might not be as accurate.")
+    #             break
+    #         elif geometry_type in valid_types:
+    #             break  # Exit the loop if the input is valid
+    #         else:
+    #             print("Error: Invalid input. Please enter one of the following options: aorta, pulm, cere, coro.")
+
+    # # Perform clustering based on the destination time field
+    # cluster_graph = discritize_dtf(dtf_mod_speed, domain, geometry_type)
+    # cluster_separate = separate_clusters(domain, cluster_graph, 30)
+    # # cluster map doesn't need to be saved
+    # export_xdmf(save_dir + "/cluster/cluster_map.xdmf", domain, cluster_separate)
+
+    # # Rescale the distance map based on the cluster radii. This will ensure that
+    # # the center of the vessel is ~1 throughout the geometry regardless of the
+    # # diameter of the vessel. This helps ensure the centerlines are traced as
+    # # accurately as possible.
+    # rescale_dis = rescale_distance_map(domain, cluster_separate, dis)
+    # # rescaled distance field doesn't need to be saved
+    # export_xdmf(save_dir + "/eikonal/rescale_dis_map.xdmf", domain, rescale_dis)
+
+    # # Find extreme nodes by looking through the nodes of the surface of the mesh
+    # # and finding all the nodes that have highest destination time values
+    # # out of their immediate neighbors
+    # extreme_nodes, _ = gala_extreme_nodes(domain, dtf_mod_speed, edgeavg * 4)
+
+    # # Solve the eikonal equation for the destination time field
+    # point_dtf_map = solve_eikonal(domain, 2, 3, point_index, rescale_dis)
+    # export_vtk(save_dir + "/eikonal/destination_time.vtu", point_dtf_map)
+
+    # # Combine all individual centerlines from the extreme nodes (outlets) into a 
+    # # single polydata
+    # centerline_polydata = combine_cl(domain, extreme_nodes, cluster_separate, save_dir + "/eikonal/destination_time_p0_000000.vtu", save_dir + "/eikonal/dis_map_p0_000000.vtu", geometry_type)
+    # # Don't need to save the un-merged, un-smooth centerline
+    # save_centerline_vtk(centerline_polydata, save_dir + "/centerlines/centerline.vtp")
+
+    # # These are the steps for merging individual centerlines that overlap
+    # _, dict_cell = create_dict(centerline_polydata)
+    # tolerance = get_subdivided_cl_spacing(dict_cell)
+    # print("#############Tolerance##################:", tolerance)
+    # print("edge max: ", edgemax)
+
+    # if tolerance < (edgemax/10):
+    #     tolerance = edgemax/10
+    #     print("############# New Tolerance: ##################", tolerance)
+
+    # smooth_centerline_polydata, _, _ = combine_cls_into_one_polydata(dict_cell, tolerance / 2)
+    # smooth_clean_centerline_polydata, _, _ = combine_cls_into_one_polydata(dict_cell, tolerance / 2, True)
+
+    # # This is the final centerline (before deletion of extra centerlines according to user)
+    # # save_centerline_vtk(smooth_centerline_polydata, save_dir + "/centerlines/smooth_centerline.vtp")
+    # # save_centerline_vtk(smooth_clean_centerline_polydata, save_dir + "/centerlines/smooth_clean_centerline.vtp")
+    # cl_distance_field(smooth_clean_centerline_polydata, save_dir + "/eikonal/dis_map_p0_000000.vtu", save_dir + "/centerlines/smooth_clean_radius_centerline.vtp")
+    # cl_distance_field(smooth_centerline_polydata, save_dir + "/eikonal/dis_map_p0_000000.vtu", save_dir + "/centerlines/smooth_radius_centerline.vtp")
+
+    # # Save extreme nodes information. This is not necessary
+    # with open(save_dir + "/extreme_nodes.txt", "w") as file:
+    #     file.write(f"There are {len(extreme_nodes)} extreme nodes: {extreme_nodes}.")
+    #     file.write(f"beta is: {edgemax/3}")
+    #     file.close()
+
+    # # Ask if the user wants to remove any extra centerlines
+    # # if remove_extra_centerlines:
+    # #     while True:
+    # #         response = input("Please visualize the centerline. Are there any extra centerlines you would like to remove? [yes/no]: ").strip().lower()
+    # #         if response == "" or response == "no":
+    # #             print("No lines to remove. Ending the program.")
+    # #             break
+    # #         elif response == "yes":
+    # #             # Prompt for cell indices to remove
+    # #             while True:
+    # #                 try:
+    # #                     cells_to_remove = input("Please enter the indexes of the lines to remove as a comma-separated list (e.g., 1, 2, 3): ")
+    # #                     cells_to_remove = [int(i.strip()) for i in cells_to_remove.split(",")]
+
+    # #                     print(f"Removing cells with indices: {cells_to_remove}")
+    # #                     output_vtp_path = save_dir + "/centerlines/smooth_centerline.vtp"
+    # #                     remove_lines_from_vtp(save_dir + "/centerlines/smooth_centerline.vtp", output_vtp_path, cells_to_remove)
+    # #                     print(f"Modified centerline saved to {output_vtp_path}")
+    # #                     break
+    # #                 except ValueError:
+    # #                     print("Invalid input. Please enter a list of integers separated by commas.")
+    # #             break
+    # #         else:
+    # #             print("Invalid response. Please enter 'yes' or 'no'.")
+    # if remove_extra_centerlines:
+    #     while True:
+    #         response = input("Please visualize the centerline. Are there any extra centerlines you would like to remove? [yes/no]: ").strip().lower()
+    #         if response == "" or response == "no":
+    #             print("No lines to remove. Ending the program.")
+    #             break
+    #         elif response == "yes":
+    #             # Prompt for cell indices to remove
+    #             while True:
+    #                 try:
+    #                     cells_to_remove = input("Please enter the indexes of the lines to remove as a comma-separated list (e.g., 1, 2, 3): ")
+    #                     cells_to_remove = [int(i.strip()) for i in cells_to_remove.split(",")]
+
+    #                     print(f"Removing cells with indices: {cells_to_remove}")
+    #                     output_vtp_path = save_dir + "/centerlines/smooth_centerline.vtp"
+    #                     remove_lines_from_vtp(save_dir + "/centerlines/smooth_centerline.vtp", output_vtp_path, cells_to_remove)
+    #                     print(f"Modified centerline saved to {output_vtp_path}")
+    #                     break
+    #                 except ValueError:
+    #                     print("Invalid input. Please enter a list of integers separated by commas.")
+    #             break
+    #         else:
+    #             print("Invalid response. Please enter 'yes' or 'no'.")
+                
+
+
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser(description="Process centerline tracing.")
+#     parser.add_argument("mesh_path", type=str, help="Path to the mesh file.")
+#     parser.add_argument("save_dir", type=str, help="Directory to save the results.")
+#     parser.add_argument("--geometry_type", type=str, help="Type of geometry (e.g., aorta, pulm, cere, coro).", default=None)
+#     parser.add_argument("--pointsource", help="Index of the point source.", default=None)
+#     parser.add_argument("--remove_extra_centerlines", action="store_true", help="Flag to remove extra centerlines.")
+
+#     args = parser.parse_args()
+#     mesh_main(args.mesh_path, args.save_dir, args.geometry_type, args.pointsource)
+
+import glob
+
+def process_all_models_in_directory(directory, base_save_dir, geometry_type=None, pointsource=None, remove_extra_centerlines=False):
+    # Find all model files in the specified directory
+    model_files = glob.glob(os.path.join(directory, "*.xdmf"))  # Adjust the pattern as needed
+
+    for model_file in model_files:
+        # Extract the model name without the extension
+        model_name = os.path.splitext(os.path.basename(model_file))[0]
+        
+        # Create a subdirectory for each model
+        # model_save_dir = os.path.join(base_save_dir, model_name)
+        model_save_dir = base_save_dir+"/"+model_name+"/"+model_name
+        os.makedirs(model_save_dir, exist_ok=True)
+
+        print(f"Processing model: {model_file}")
+        mesh_main(model_file, model_save_dir, geometry_type, pointsource, remove_extra_centerlines)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Process centerline tracing.")
-    parser.add_argument("mesh_path", type=str, help="Path to the mesh file.")
-    parser.add_argument("save_dir", type=str, help="Directory to save the results.")
-    parser.add_argument("--geometry_type", type=str, help="Type of geometry (e.g., aorta, pulm, cere, coro).", default=None)
-    parser.add_argument("--pointsource", type=int, help="Index of the point source.", default=None)
+    # Hardcode the folder and save directory
+    model_directory = "/Users/galasanchezvanmoer/Desktop/PhD_Project/VMR_mesh_now"
+    base_save_directory = "/Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/01252025/fixing_radius/acutal_eps/centerlines/all"
+    geometry_type = "aorta"  # Example geometry type
+    pointsource = "auto"  # Example point source
+    remove_cl = False  # Example flag to remove extra centerlines
 
-    args = parser.parse_args()
-    main(args.mesh_path, args.save_dir, args.geometry_type, args.pointsource)
+    process_all_models_in_directory(model_directory, base_save_directory, geometry_type, pointsource)

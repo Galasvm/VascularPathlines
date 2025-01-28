@@ -7,7 +7,7 @@ SimVascular into a format which is redeble in FEniCS.
 
 '''
 Use python convert_vtu_and_vtp.py -ivtp /Users/galasanchezvanmoer/Desktop/PhD_Project/VMR_models/0066_H_CORO_H/Meshes/0002_0001.vtp -ivtu /Users/galasanchezvanmoer/Desktop/PhD_Project/VMR_models/0066_H_CORO_H/Meshes/0002_0001.vtu -o Meshes/0066_H_CORO_H/0066_H_CORO_H.xdmf
-
+python convert_vtu_and_vtp.py -ivtp /Users/galasanchezvanmoer/Desktop/PhD_Project/VMR_models/SVProject/Meshes/demomesh.vtp -o Meshes/trial/trial.xdmf
 
 '''
 from os import path
@@ -157,6 +157,7 @@ def convert_to_dolfin_xdmf(vtp_path, vtu_path, output_path, global_node_ID_name,
                                          cells=[("triangle", mapped_cells)],
                                          cell_data={"triangle": cell_data},
                                          field_data={"triangle": {face_ID_name: cell_data}}))
+
 
 
 def read_command_line():
