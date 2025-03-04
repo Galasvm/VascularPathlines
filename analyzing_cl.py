@@ -2,7 +2,7 @@ import vtk
 import os
 import csv
 import yaml
-from tracingcenterlines import save_centerline_vtk
+from tracingcenterlines_old import save_centerline_vtk
 import statistics
 
 

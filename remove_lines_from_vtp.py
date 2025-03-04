@@ -64,8 +64,8 @@ def remove_lines_from_vtp(input_vtp_path, output_vtp_path, cells_to_remove):
     writer.SetInputData(geometry_filter.GetOutput())
     writer.Write()
 
-# Create a list of numbers from 109 to 505
-numbers = list(range(206, 217))
+
+numbers = [83]
 
 
-remove_lines_from_vtp("/Users/galasanchezvanmoer/Desktop/PhD_Project/numi_centerlines/Pulm_surfaces/extra_clean_alpha_10/PA000212.vtp","/Users/galasanchezvanmoer/Desktop/PhD_Project/212_smooth_clean_centerline.vtp",numbers)
+remove_lines_from_vtp("/Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/02202025/summary_results_pointsource/0082_H_PULM_H/0082_H_PULM_H/centerlines/smooth_clean_radius_centerline.vtp","/Users/galasanchezvanmoer/Desktop/PhD_Project/centerline_analysis/mine_cl/0082_H_PULM_H.vtp",numbers)
