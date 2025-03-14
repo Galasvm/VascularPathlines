@@ -407,6 +407,14 @@ def gala_extreme_nodes(domain, dtf_map, distance_threshold):
 
         if keep_current:
             final_dofs.append(current_dof)
+    coords_final_dofs = []
+
+    # Collect coordinates of final DOFs
+    for dof in final_dofs:
+        coords_final_dofs.append(coordinates[dof])
+
+    # Convert to numpy array
+    coords_final_dofs = np.array(coords_final_dofs)
 
     surrounding_dofs_array = set()  # Use set to avoid duplicates
     for dof in final_dofs:
@@ -415,7 +423,7 @@ def gala_extreme_nodes(domain, dtf_map, distance_threshold):
             surrounding_dofs_array.update(facet_to_dofs[facet])
 
     surrounding_dofs_array_ = np.array(list(surrounding_dofs_array))
-    return final_dofs, surrounding_dofs_array_
+    return final_dofs, coords_final_dofs, surrounding_dofs_array_
 
 
 def cluster_map_dtf(values, num_clusters=25):
@@ -850,7 +858,115 @@ def finding_longest_streamline(all_streamlines):
         return None
 
 
-def trace_centerline_vtk(grad_dtf_path, start_point):
+
+def finding_best_streamline(all_streamlines, dis_map_path):
+    """
+    Find the best streamline traced from each outlet based on the distance map
+    (choose the streamline with the highest distance).
+
+    Args:
+        all_streamlines(vtp file): The vtp file containing all streamlines.
+        dis_map_path (str): Path to the VTK file containing the distance map.
+
+    Returns:
+        int: The index of the best streamline, or None if no valid streamline
+        is found.
+    """
+
+    # Find the number of streamlines (cells)
+    num_cells = all_streamlines.GetNumberOfCells()
+
+    # Read the distance map from the VTK file
+    reader = vtk.vtkXMLUnstructuredGridReader()
+    reader.SetFileName(dis_map_path)
+    reader.Update()
+
+    # Get the unstructured grid (mesh) from the reader
+    mesh = reader.GetOutput()
+
+    # Create a probe filter to interpolate the solution at arbitrary points
+    probe = vtk.vtkProbeFilter()
+    points_polydata = vtk.vtkPolyData()
+
+    # Create a vtkPoints object for specific points
+    input_points = vtk.vtkPoints()
+
+    # Initialize variables to store the index of the best streamline and the
+    # max distance
+    max_distance = -float("inf")
+    max_points = -1
+
+    for i in range(num_cells):
+        selected_line = all_streamlines.GetCell(i)
+
+        # Check if the streamline has points
+        num_point_ids = selected_line.GetNumberOfPoints()
+
+        if num_point_ids == 0:
+            # Skip this streamline if it has no points
+            print(f"Streamline {i} has no points, skipping.")
+            continue
+
+        # If this streamline has the most points, update the max points and store the current index
+        if num_point_ids > max_points:
+            max_points = num_point_ids
+            best_streamline_index = i
+
+
+    # Iterate through all the streamlines
+    for i in range(num_cells):
+        selected_line = all_streamlines.GetCell(i)
+
+        # Check if the streamline has points
+        num_point_ids = selected_line.GetNumberOfPoints()
+        point_id = selected_line.GetPointId(0)
+
+        if num_point_ids == 0:
+            # Skip this streamline if it has no points
+
+            continue
+
+        # Get the first point of the streamline
+        point = all_streamlines.GetPoint(point_id)
+        input_points.InsertNextPoint(point)
+
+        # Interpolate the distance field for the current point
+        points_polydata.SetPoints(input_points)
+        probe.SetInputData(points_polydata)
+        probe.SetSourceData(mesh)
+        probe.Update()
+        interpolated_data = probe.GetOutput()
+
+        # Access the interpolated distance field using the correct name 'f'
+        distance_array = interpolated_data.GetPointData().GetArray("f")
+
+        if distance_array is None:
+            print(f"Error: Could not find the 'f' array for streamline {i}.")
+            continue
+
+        # Get the distance value at this point
+        distance_value = distance_array.GetValue(0)
+
+        # If this distance is the highest, update the max distance and store
+        # the current index
+        if distance_value > max_distance:
+            max_distance = distance_value
+        
+        if distance_value == max_distance and num_point_ids > (max_points*0.8):
+            best_streamline_index = i  # Store the index of the current
+
+        # Clear points for the next iteration
+        input_points.Reset()
+
+    # Return the index of the best streamline and its associated max distance
+    if best_streamline_index != -1:
+        return best_streamline_index
+    else:
+        print("No valid streamline found.")
+        return None
+
+
+def trace_centerline_vtk(grad_dtf_path, start_point, dis_map_path):
     """
     Trace the centerline using a gradient destination time field (DTF) map and
     a starting point.
@@ -916,13 +1032,14 @@ def trace_centerline_vtk(grad_dtf_path, start_point):
 
     # Find the best streamline based on the distance map
 
-    id_best_streamline = finding_longest_streamline(streamlines)
+    # id_best_streamline = finding_longest_streamline(streamlines)
+    id_best_streamline = finding_best_streamline(streamlines, dis_map_path)
 
     selected_cell = streamlines.GetCell(id_best_streamline)
 
     # Check if the selected cell has more than 10 points
-    if selected_cell.GetNumberOfPoints() <= 10:
-        print("The selected streamline is too short (10 or fewer points).")
+    if selected_cell.GetNumberOfPoints() <= 15:
+        print("The selected streamline is too short (15 or fewer points).")
         return None
 
     # Extract the selected line and its points
@@ -932,13 +1049,13 @@ def trace_centerline_vtk(grad_dtf_path, start_point):
 
     # Create a new cell and add its points to `selected_points`, skipping the first 10 points
     selected_line = vtk.vtkPolyLine()
-    selected_line.GetPointIds().SetNumberOfIds(selected_cell.GetNumberOfPoints() - 10)
+    selected_line.GetPointIds().SetNumberOfIds(selected_cell.GetNumberOfPoints() - 15)
 
-    for i in range(10, selected_cell.GetNumberOfPoints()):
+    for i in range(15, selected_cell.GetNumberOfPoints()):
         point_id = selected_cell.GetPointId(i)
         point = streamlines.GetPoint(point_id)
         selected_points.InsertNextPoint(point)
-        selected_line.GetPointIds().SetId(i - 10, i - 10)
+        selected_line.GetPointIds().SetId(i - 15, i - 15)
 
     # Add the line to the cell array
     selected_lines.InsertNextCell(selected_line)
@@ -991,7 +1108,7 @@ def merge_centerline_segments(centerline):
     return merged_centerline
 
 
-def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path):
+def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path, dis_map_path,):
     """
     Combine the centerlines traced from each extreme node (outlet of geometry)
     into a single polydata
@@ -1037,7 +1154,7 @@ def combine_cl(mesh, extreme_nodes, cluster_map, dtf_sol_path):
         start_pt = coordinates[extreme_nodes_filtered[j]]
 
         # Trace the centerline from the current extreme node
-        polydata = trace_centerline_vtk(dtf_sol_path + "grad_dtf.vtu", start_pt)
+        polydata = trace_centerline_vtk(dtf_sol_path + "grad_dtf.vtu", start_pt, dis_map_path)
 
         if polydata is None:
             continue
@@ -1237,7 +1354,7 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05, clean=False):
             master_edges.extend(edges)
             temp_pd = create_polydata_from_edges(master_edges,
                     create_vtkpoints_from_coordinates(master_coords))
-      
+
             # prepare to update dict_cell
             new_dict_cell_pd[i] = temp_pd
             new_dict_cell_points[i] = dict_cell[i][1]
@@ -1257,7 +1374,7 @@ def combine_cls_into_one_polydata(dict_cell, tolerance=0.05, clean=False):
                 coord = backward_cl[j]
 
                 closest_point = findclosestpoint(temp_pd, coord)
-   
+
                 # when the other line gets close to the existing line, stop
                 if np.linalg.norm(np.array(coord) - np.array(closest_point)) < tolerance:
                     # find the index of the closest point
@@ -1390,23 +1507,23 @@ def cl_distance_field(cl, eps, dis_field_map, output_vtp_file):
     probe_filter.SetInputData(cl)
     probe_filter.SetSourceData(dis_field_map)
     probe_filter.Update()
-    
+
     # Get the distance array
     distance_array = probe_filter.GetOutput().GetPointData().GetArray("f")
-    
+
     # Convert the distance array to a NumPy array for manipulation
     distance_values = numpy_support.vtk_to_numpy(distance_array)
-    
+
     # Apply the transformation to each value
     transformed_values = 1.224 * distance_values + 1.037 * eps + 0.012
-    
+
     # Convert the transformed values back to a VTK array
     transformed_array = numpy_support.numpy_to_vtk(transformed_values)
     transformed_array.SetName("MaximumInscribedSphereRadius")
-    
+
     # Add the transformed array to the centerline's point data
     cl.GetPointData().AddArray(transformed_array)
-    
+
     # Write the updated centerline to a VTP file
     writer = vtk.vtkXMLPolyDataWriter()
     writer.SetFileName(output_vtp_file)
@@ -1417,14 +1534,15 @@ def cl_distance_field(cl, eps, dis_field_map, output_vtp_file):
 
 
 import time
+import pyvista as pv
 
 def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False):
 
     if model_path.endswith(".xdmf"):
         domain = import_mesh(model_path)
         mesh_time = None
-        
-    elif model_path.endswith(".vtp"):
+
+    elif model_path.endswith(".vtp") or model_path.endswith(".stl"):
         start_time = time.time()
         main(model_path, save_dir)
         end_time = time.time()
@@ -1437,7 +1555,7 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
     # Solve for the distance field
     dis = solve_eikonal(domain, 1, 1, 1)
     export_vtk(save_dir + "/eikonal/dis_map.vtu", dis) # this must be saved for the next step
-    
+
     with open(save_dir + "/eikonal/eps.txt", "w") as file:
         file.write(f"eps: {edgemax/3}")
         file.close()
@@ -1489,7 +1607,9 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
     # Find extreme nodes by looking through the nodes of the surface of the mesh
     # and finding all the nodes that have highest destination time values
     # out of their immediate neighbors
-    extreme_nodes, _ = gala_extreme_nodes(domain, dtf_mod_speed, edgeavg * 4)
+    extreme_nodes, extreme_node_coord, _ = gala_extreme_nodes(domain, dtf_mod_speed, edgeavg * 4)
+    point_cloud = pv.PolyData(extreme_node_coord)
+    point_cloud.save(save_dir+"/extreme_points.vtp")
 
     # Solve the eikonal equation for the destination time field
     point_dtf_map = solve_eikonal(domain, 2, 2, point_index, rescale_dis)
@@ -1497,7 +1617,7 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
 
     # Combine all individual centerlines from the extreme nodes (outlets) into a 
     # single polydata
-    centerline_polydata = combine_cl(domain, extreme_nodes, cluster_separate, save_dir + "/eikonal/destination_time_p0_000000.vtu")
+    centerline_polydata = combine_cl(domain, extreme_nodes, cluster_separate, save_dir + "/eikonal/destination_time_p0_000000.vtu",save_dir + "/eikonal/dis_map_p0_000000.vtu")
     # np.save(save_dir+".npy", coord_extreme_nodes)
     # Don't need to save the un-merged, un-smooth centerline
     save_centerline_vtk(centerline_polydata, save_dir + "/centerlines/centerline.vtp")
@@ -1564,15 +1684,16 @@ import glob
 
 def process_all_models_in_directory(directory, base_save_dir, pointsource=None, remove_extra_centerlines=False):
     # Find all model files in the specified directory
-    vtp_files = glob.glob(os.path.join(directory, "*.vtp"))  # Adjust the pattern as needed
-    xdmf_files = glob.glob(os.path.join(directory, "*.xdmf"))  # Adjust the pattern as needed
+    vtp_files = glob.glob(os.path.join(directory, "*.vtp"))
+    xdmf_files = glob.glob(os.path.join(directory, "*.xdmf"))
+    stl_files = glob.glob(os.path.join(directory, "*.stl"))
 
-    model_files = vtp_files + xdmf_files
+    model_files = vtp_files + xdmf_files + stl_files
 
     for model_file in model_files:
         # Extract the model name without the extension
         model_name = os.path.splitext(os.path.basename(model_file))[0]
-        
+
         # Create a subdirectory for each model
         # model_save_dir = os.path.join(base_save_dir, model_name)
         model_save_dir = base_save_dir+"/"+model_name+"/"+model_name
@@ -1584,8 +1705,8 @@ def process_all_models_in_directory(directory, base_save_dir, pointsource=None, 
 
 if __name__ == "__main__":
     # Hardcode the folder and save directory
-    model_directory = "/Users/galasanchezvanmoer/Desktop/PhD_Project/VMR_now"
-    base_save_directory = "/Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/Eikonal_mine/results/02202025/summary_results_pointsource"
+    model_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_paper/results/final_meshes"
+    base_save_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_paper/results/final_results2"
     pointsource = None  # Example point source
     remove_cl = False  # Example flag to remove extra centerlines
 
