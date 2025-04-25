@@ -1,7 +1,7 @@
 import vtk
 import os
 import csv
-from tracingcenterlines import save_centerline_vtk
+from extracting_cl.tracingcenterlines import save_centerline_vtk
 import statistics
 
 

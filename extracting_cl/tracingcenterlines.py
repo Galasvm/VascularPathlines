@@ -27,7 +27,7 @@ from scipy.sparse.csgraph import connected_components
 from scipy.sparse import csr_matrix
 import os
 import argparse
-from model_to_mesh import *
+from extracting_cl.model_to_mesh import *
 
 
 
