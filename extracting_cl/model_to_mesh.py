@@ -8,6 +8,7 @@ try:
 except ImportError:
     raise ImportError("Could not find meshio, please install using pip")
 
+
 def vtp_to_stl(vtp_file, output_directory):
     # Read the VTP file
     reader = vtk.vtkXMLPolyDataReader()
@@ -66,20 +67,14 @@ def msh_to_xdmf(msh_file, output_directory):
 
 def main(model_directory, output_directory):
 
-    # if model_directory.endswith(".stl"):
-    #     stl_to_msh(model_directory, output_directory)
-    #     msh_to_xdmf(output_directory + ".msh", output_directory)
-    #     return
-    # elif model_directory.endswith(".vtp"):
-    #     vtp_to_stl(model_directory, output_directory)
-    #     stl_to_msh(output_directory + "/model.stl", output_directory)
-    #     msh_to_xdmf(output_directory + ".msh", output_directory)
-    #     return
+    if model_directory.endswith(".stl"):
+        stl_to_msh(model_directory, output_directory + ".msh")
+        msh_to_xdmf(output_directory + ".msh", output_directory)
 
-    vtp_to_stl(model_directory, output_directory)
-    stl_to_msh(output_directory + "/model.stl", output_directory + ".msh")
-    msh_to_xdmf(output_directory + ".msh", output_directory)
-
+    elif model_directory.endswith(".vtp"):
+        vtp_to_stl(model_directory, output_directory)
+        stl_to_msh(output_directory + "/model.stl", output_directory + ".msh")
+        msh_to_xdmf(output_directory + ".msh", output_directory)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process centerline tracing.")

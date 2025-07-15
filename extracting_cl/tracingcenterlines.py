@@ -129,38 +129,6 @@ def automatic_pointsource(distance_map):
     return point_source
 
 
-# def edge_max(domain):
-#     """
-#     Calculate the maximum, minimum, and average edge lengths of the cells in
-#     the mesh.
-
-#     Args:
-#         domain: The mesh domain (xdmf file).
-
-#     Returns:
-#         tuple: A tuple containing the maximum edge length, minimum edge length,
-#         and average edge length.
-#     """
-
-#     # Get the total number of cells in the mesh
-#     num_cells = domain.topology.index_map(domain.topology.dim).size_global
-
-#     # Create an array of cell indices
-#     cells = np.arange(num_cells, dtype=np.int32)
-
-#     # Create a new mesh object with the same topology and geometry
-#     domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology,
-#                                            domain.geometry)
-
-#     # Calculate the edge lengths of the cells
-#     edge = dolfinx.cpp.mesh.h(domain, domain.topology.dim-2, cells)
-
-#     # Calculate the average, max and min edge length
-#     edge_avg = np.mean(edge)
-#     edge_max = max(edge)
-#     edge_min = min(edge)
-
-#     return edge_max, edge_min, edge_avg
 def edge_max(domain):
     """
     Calculate the maximum, minimum, and average edge lengths of the cells in the mesh.
@@ -179,6 +147,7 @@ def edge_max(domain):
     edge_max = max(edge)
     edge_min = min(edge)
     return edge_max, edge_min, edge_avg
+
 
 def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
     """
@@ -223,7 +192,6 @@ def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
 
         # Define the Dirichlet boundary condition at one point
         bc = fem.dirichletbc(default_scalar_type(0), ps_index_array, V)
-
 
     else:
         print("error: no other boundary types")
@@ -288,7 +256,7 @@ def set_problem(funcspace, DirichletBC, epsilon, f):
 
     solver.rtol = 1e-8 # GALA CHANGED 02202025
 
-    log.set_log_level(log.LogLevel.INFO)
+    # log.set_log_level(log.LogLevel.INFO)
 
     # Solve the nonlinear problem
     solver.solve(u)
@@ -465,8 +433,6 @@ def discritize_dtf(dtf_map, mesh):
     Args:
         dtf_map (fem.Function): The destination time field map.
         mesh (xdmf file): The mesh domain.
-        type (str): The type of geometry
-        (e.g., "aorta", "pulm", "cere", "coro").
 
     Returns:
         fem.Function: A function with the clustered destination time field 
@@ -939,7 +905,7 @@ def finding_best_streamline(all_streamlines, dis_map_path):
         # the current index
         if distance_value > max_distance:
             max_distance = distance_value
-        
+   
         if distance_value == max_distance and num_point_ids > (max_points*0.8):
             best_streamline_index = i  # Store the index of the current
 
@@ -1670,7 +1636,7 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
 
 import glob
 
-def process_all_models_in_directory(directory, base_save_dir, pointsource=None, remove_extra_centerlines=False):
+def process_all_models_in_directory(directory, base_save_dir, pointsource="auto", remove_extra_centerlines=False):
     # Find all model files in the specified directory
     vtp_files = glob.glob(os.path.join(directory, "*.vtp"))
     xdmf_files = glob.glob(os.path.join(directory, "*.xdmf"))
@@ -1695,7 +1661,7 @@ if __name__ == "__main__":
     # Hardcode the folder and save directory
     model_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now"
     base_save_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now/centerlines"
-    pointsource = None  # Example point source
+    pointsource = "auto"  # Example point source (either a int or "auto")
     remove_cl = False  # Example flag to remove extra centerlines
 
     process_all_models_in_directory(model_directory, base_save_directory, pointsource)
