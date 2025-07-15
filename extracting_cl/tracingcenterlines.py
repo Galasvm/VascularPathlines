@@ -1601,40 +1601,63 @@ def find_point_index_in_vtu(vtu_path, point_xyz):
     return int(idx)
 
 
-def user_pick_lines(vtp_path):
+def user_pick_lines(vtp_path, vessel_xdmf_path=None):
     """
     Display a VTP of centerlines, let the user right-click to
     toggle-select cells (lines). Press 'q' to finish and close.
+    Optionally overlay vessel geometry from XDMF for context.
     Returns a list of selected cell IDs.
     """
-    # Read the polydata
+    # Read the centerline polydata
     reader = vtk.vtkXMLPolyDataReader()
     reader.SetFileName(vtp_path)
     reader.Update()
     pd = reader.GetOutput()
 
-    # Mapper and actor for full centerlines
-    mapper = vtk.vtkPolyDataMapper()
-    mapper.SetInputData(pd)
-    actor = vtk.vtkActor()
-    actor.SetMapper(mapper)
-    actor.GetProperty().SetColor(0.2, 0.2, 0.8)
-    actor.GetProperty().SetLineWidth(2)
-
-    # Renderer, window, interactor
+    # Rendering setup
     renderer = vtk.vtkRenderer()
-    renderer.AddActor(actor)
     renderer.SetBackground(1, 1, 1)
     renwin = vtk.vtkRenderWindow()
     renwin.AddRenderer(renderer)
     iren = vtk.vtkRenderWindowInteractor()
     iren.SetRenderWindow(renwin)
 
+    # 1) Optional vessel geometry overlay
+    if vessel_xdmf_path:
+        geo_reader = vtk.vtkXdmf3Reader()
+        geo_reader.SetFileName(vessel_xdmf_path)
+        geo_reader.Update()
+        ug_geo = geo_reader.GetOutput()
+        surf_filter = vtk.vtkDataSetSurfaceFilter()
+        surf_filter.SetInputData(ug_geo)
+        surf_filter.Update()
+        vessel_surface = surf_filter.GetOutput()
+
+        vmapper = vtk.vtkPolyDataMapper()
+        vmapper.SetInputData(vessel_surface)
+        vactor = vtk.vtkActor()
+        vactor.SetMapper(vmapper)
+        vactor.GetProperty().SetOpacity(0.2)         # translucent
+        vactor.GetProperty().SetColor(1, 1, 1)  # white
+        vactor.SetPickable(False)                    # ignore picks
+        renderer.AddActor(vactor)
+
+    # 2) Centerlines actor (opaque, thick)
+    cl_mapper = vtk.vtkPolyDataMapper()
+    cl_mapper.SetInputData(pd)
+    cl_actor = vtk.vtkActor()
+    cl_actor.SetMapper(cl_mapper)
+    cl_actor.GetProperty().SetColor(0.2, 0.2, 0.8)
+    cl_actor.GetProperty().SetLineWidth(6)  # thicker base lines
+    renderer.AddActor(cl_actor)
+
+    # storage for selections
     selected_ids = []
     selected_actors = {}
 
+    # Custom interactor style
     class CellStyle(vtk.vtkInteractorStyleTrackballCamera):
-        def __init__(self, parent=None):
+        def __init__(self):
             super().__init__()
             self.AddObserver('RightButtonPressEvent', self.on_right)
             self.AddObserver('KeyPressEvent', self.on_key)
@@ -1642,18 +1665,20 @@ def user_pick_lines(vtp_path):
         def on_right(self, obj, event):
             x, y = iren.GetEventPosition()
             picker = vtk.vtkCellPicker()
-            picker.SetTolerance(0.0005)
+            picker.SetTolerance(0.005)
             picker.Pick(x, y, 0, renderer)
             cid = picker.GetCellId()
             if cid < 0:
                 return
-            # Toggle selection
+
+            # toggle selection
             if cid in selected_actors:
+                # remove existing highlight
                 renderer.RemoveActor(selected_actors[cid])
                 selected_ids.remove(cid)
                 del selected_actors[cid]
             else:
-                # Extract the single cell
+                # extract that single cell
                 ids = vtk.vtkIdList()
                 ids.InsertNextId(cid)
                 extract = vtk.vtkExtractCells()
@@ -1661,39 +1686,41 @@ def user_pick_lines(vtp_path):
                 extract.SetCellList(ids)
                 extract.Update()
                 ug_sel = extract.GetOutput()
-                # Convert to PolyData
+
+                # convert to PolyData so mapper can handle it
                 geom = vtk.vtkGeometryFilter()
                 geom.SetInputData(ug_sel)
                 geom.Update()
                 sel_poly = geom.GetOutput()
 
+                # highlight it in red and thicker
                 sel_mapper = vtk.vtkPolyDataMapper()
                 sel_mapper.SetInputData(sel_poly)
                 sel_actor = vtk.vtkActor()
                 sel_actor.SetMapper(sel_mapper)
                 sel_actor.GetProperty().SetColor(1, 0, 0)
-                sel_actor.GetProperty().SetLineWidth(4)
+                sel_actor.GetProperty().SetLineWidth(8)  # even thicker
                 renderer.AddActor(sel_actor)
 
                 selected_actors[cid] = sel_actor
                 selected_ids.append(cid)
+
             renwin.Render()
 
         def on_key(self, obj, event):
-            key = self.GetInteractor().GetKeySym()
-            if key.lower() == 'q':
+            key = self.GetInteractor().GetKeySym().lower()
+            if key == 'q':
                 iren.TerminateApp()
 
-    # Apply custom style and start
+    # Launch
     style = CellStyle()
     iren.SetInteractorStyle(style)
     renwin.Render()
-    renwin.SetWindowName("Left-click: toggle select; 'q': finish")
+    renwin.SetWindowName("Right-click: toggle select lines; 'q': finish")
     iren.Initialize()
     iren.Start()
 
     return selected_ids
-
 
 def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False):
 
@@ -1747,13 +1774,14 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
     # the extreme nodes (or outlets of the geometry)
     second_start_timer = time.time()
     dtf_mod_speed = solve_eikonal(domain, 2, 3, point_index, dis)
-    export_xdmf(save_dir + "/eikonal/dft_mod_speed.xdmf", domain, dtf_mod_speed)
+    # dtf_mod_speed does not need to be saved
+    # export_xdmf(save_dir + "/eikonal/dft_mod_speed.xdmf", domain, dtf_mod_speed)
 
     # Perform clustering based on the destination time field
     cluster_graph = discritize_dtf(dtf_mod_speed, domain)
     cluster_separate = separate_clusters(domain, cluster_graph, 30)
     # cluster map doesn't need to be saved
-    export_xdmf(save_dir + "/cluster/cluster_map.xdmf", domain, cluster_separate)
+    # export_xdmf(save_dir + "/cluster/cluster_map.xdmf", domain, cluster_separate) 
 
     # Rescale the distance map based on the cluster radii. This will ensure that
     # the center of the vessel is ~1 throughout the geometry regardless of the
@@ -1761,18 +1789,20 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
     # accurately as possible.
     rescale_dis = rescale_distance_map(domain, cluster_separate, dis)
     # rescaled distance field doesn't need to be saved
-    export_xdmf(save_dir + "/eikonal/rescale_dis_map.xdmf", domain, rescale_dis)
+    # export_xdmf(save_dir + "/eikonal/rescale_dis_map.xdmf", domain, rescale_dis) 
 
     # Find extreme nodes by looking through the nodes of the surface of the mesh
     # and finding all the nodes that have highest destination time values
     # out of their immediate neighbors
     extreme_nodes, extreme_node_coord, _ = gala_extreme_nodes(domain, dtf_mod_speed, edgeavg * 4)
     point_cloud = pv.PolyData(extreme_node_coord)
+    # point_cloud does not need to be saved
     point_cloud.save(save_dir+"/extreme_points.vtp")
 
     # Solve the eikonal equation for the destination time field
     point_dtf_map = solve_eikonal(domain, 2, 2, point_index, rescale_dis)
-    export_vtk(save_dir + "/eikonal/destination_time.vtu", point_dtf_map)
+    
+    export_vtk(save_dir + "/eikonal/destination_time.vtu", point_dtf_map) # destination time field NEEDS to be saved
 
     # Combine all individual centerlines from the extreme nodes (outlets) into a 
     # single polydata
@@ -1796,9 +1826,8 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
     smooth_clean_centerline_polydata, _, _ = combine_cls_into_one_polydata(dict_cell, tolerance, True) # Gala changed tolerance!!!!
 
     # This is the final centerline (before deletion of extra centerlines according to user)
-    # save_centerline_vtk(smooth_centerline_polydata, save_dir + "/centerlines/smooth_centerline.vtp")
-    save_centerline_vtk(smooth_clean_centerline_polydata, save_dir + "/centerlines/smooth_clean_centerline.vtp")
-    cl_distance_field(smooth_clean_centerline_polydata, edgemax/3, save_dir + "/eikonal/dis_map_p0_000000.vtu", save_dir + "/centerlines/smooth_clean_radius_centerline.vtp")
+    # save_centerline_vtk(smooth_clean_centerline_polydata, save_dir + "/centerlines/smooth_clean_centerline.vtp")
+    cl_distance_field(smooth_clean_centerline_polydata, edgemax/3, save_dir + "/eikonal/dis_map_p0_000000.vtu", save_dir + "/centerlines/smooth_centerline.vtp")
     end_timer = time.time()
     run_time = (end_timer - second_start_timer) + (first_stop_timer-start_timer)
     # Save extreme nodes information. This is not necessary
@@ -1815,14 +1844,17 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
     if remove_extra_centerlines:
         while True:
             print("Please visualize the centerline. If there are any extra centerlines you would like to remove, left-click on them to select them. Press 'q' to finish.")
-            ids = user_pick_lines(save_dir + "/centerlines/smooth_clean_centerline.vtp")
+            if model_path.endswith(".xdmf"):
+                ids = user_pick_lines(save_dir + "/centerlines/smooth_centerline.vtp", model_path)
+            else:
+                ids = user_pick_lines(save_dir + "/centerlines/smooth_centerline.vtp", save_dir + ".xdmf")
             print(f"Selected lines to remove: {ids}")
             if not ids:
                 print("No lines to remove. Ending the program.")
                 break
             else:
-                output_vtp_path = save_dir + "/centerlines/smooth_clean_centerline.vtp"
-                remove_lines_from_vtp(save_dir + "/centerlines/smooth_clean_centerline.vtp", output_vtp_path, ids)
+                output_vtp_path = save_dir + "/centerlines/smooth_centerline.vtp"
+                remove_lines_from_vtp(save_dir + "/centerlines/smooth_centerline.vtp", output_vtp_path, ids)
                 break
 
 
