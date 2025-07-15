@@ -10,9 +10,9 @@ except ImportError:
 
 try:
     import dolfinx
-    print (dolfinx.dolfinx_version())
 except ImportError:
     raise ImportError("Could not find dolfinx, please install")
+
 
 import numpy as np
 from dolfinx import fem, default_scalar_type, log
@@ -27,7 +27,7 @@ from scipy.sparse.csgraph import connected_components
 from scipy.sparse import csr_matrix
 import os
 import argparse
-from extracting_cl.model_to_mesh import *
+from model_to_mesh import *
 
 
 
@@ -40,7 +40,7 @@ def import_mesh(path_name):
         path_facets (str): Path to the XDMF file containing the facet tags.
 
     Returns:
-        dolfinx.cpp.mesh.Mesh: The imported mesh.
+        dolfinx.cpp.mesh.Mesh: The imported mesh
     """
 
     # Read the mesh from the XDMF file
@@ -129,39 +129,56 @@ def automatic_pointsource(distance_map):
     return point_source
 
 
+# def edge_max(domain):
+#     """
+#     Calculate the maximum, minimum, and average edge lengths of the cells in
+#     the mesh.
+
+#     Args:
+#         domain: The mesh domain (xdmf file).
+
+#     Returns:
+#         tuple: A tuple containing the maximum edge length, minimum edge length,
+#         and average edge length.
+#     """
+
+#     # Get the total number of cells in the mesh
+#     num_cells = domain.topology.index_map(domain.topology.dim).size_global
+
+#     # Create an array of cell indices
+#     cells = np.arange(num_cells, dtype=np.int32)
+
+#     # Create a new mesh object with the same topology and geometry
+#     domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology,
+#                                            domain.geometry)
+
+#     # Calculate the edge lengths of the cells
+#     edge = dolfinx.cpp.mesh.h(domain, domain.topology.dim-2, cells)
+
+#     # Calculate the average, max and min edge length
+#     edge_avg = np.mean(edge)
+#     edge_max = max(edge)
+#     edge_min = min(edge)
+
+#     return edge_max, edge_min, edge_avg
 def edge_max(domain):
     """
-    Calculate the maximum, minimum, and average edge lengths of the cells in
-    the mesh.
-
+    Calculate the maximum, minimum, and average edge lengths of the cells in the mesh.
     Args:
         domain: The mesh domain (xdmf file).
-
     Returns:
-        tuple: A tuple containing the maximum edge length, minimum edge length,
-        and average edge length.
+        tuple: (max edge length, min edge length, avg edge length)
     """
+    # Ensure edge-to-cell connectivity exists
+    domain.topology.create_connectivity(domain.topology.dim - 2, domain.topology.dim)
 
-    # Get the total number of cells in the mesh
     num_cells = domain.topology.index_map(domain.topology.dim).size_global
-
-    # Create an array of cell indices
     cells = np.arange(num_cells, dtype=np.int32)
-
-    # Create a new mesh object with the same topology and geometry
-    domain = dolfinx.cpp.mesh.Mesh_float64(domain.comm, domain.topology,
-                                           domain.geometry)
-
-    # Calculate the edge lengths of the cells
-    edge = dolfinx.cpp.mesh.h(domain, domain.topology.dim-2, cells)
-
-    # Calculate the average, max and min edge length
+    edge = dolfinx.cpp.mesh.h(domain._cpp_object, domain.topology.dim-2, cells)
     edge_avg = np.mean(edge)
     edge_max = max(edge)
     edge_min = min(edge)
-
     return edge_max, edge_min, edge_avg
-
 
 def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
     """
@@ -191,7 +208,7 @@ def solve_eikonal(domain, boundary_type, f_type, ps_index=1, distance=1):
                                         domain.topology.dim)
 
     # Get boundary facets and corresponding DOFs
-    boundary_facets = dolfinx.cpp.mesh.exterior_facet_indices(domain.topology)
+    boundary_facets = dolfinx.cpp.mesh.exterior_facet_indices(domain.topology._cpp_object)
     boundary_dofs = fem.locate_dofs_topological(V, domain.topology.dim - 1,
                                                 boundary_facets)
     hmax, _, _ = edge_max(domain)
@@ -275,7 +292,6 @@ def set_problem(funcspace, DirichletBC, epsilon, f):
 
     # Solve the nonlinear problem
     solver.solve(u)
-    # num_iterations, converged = solver.solve(u)
 
     return u
 
@@ -304,8 +320,7 @@ def gala_extreme_nodes(domain, dtf_map, distance_threshold):
                                         domain.topology.dim)
 
     # Get boundary facets (2D triangles) and corresponding DOFs
-    boundary_facets_indices = dolfinx.cpp.mesh.exterior_facet_indices(domain.
-                                                                      topology)
+    boundary_facets_indices = dolfinx.cpp.mesh.exterior_facet_indices(domain.topology._cpp_object)
 
     # Dictionary to store facet -> DOFs mapping
     facet_to_dofs = {}
@@ -1678,8 +1693,8 @@ def process_all_models_in_directory(directory, base_save_dir, pointsource=None, 
 
 if __name__ == "__main__":
     # Hardcode the folder and save directory
-    model_directory = "/Users/galasanchezvanmoer/Desktop/PhD_Project/SeqSeg_Simulations/Mesh_refinement/no_BL/0034_H_ABAO_AAA/Models"
-    base_save_directory = "/Users/galasanchezvanmoer/Desktop/PhD_Project/SeqSeg_Simulations/Mesh_refinement/no_BL/0034_H_ABAO_AAA/Models/centerline"
+    model_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now"
+    base_save_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now/centerlines"
     pointsource = None  # Example point source
     remove_cl = False  # Example flag to remove extra centerlines
 
