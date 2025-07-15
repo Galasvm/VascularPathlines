@@ -28,8 +28,9 @@ from scipy.sparse import csr_matrix
 import os
 import argparse
 from model_to_mesh import *
-
-
+import time
+import pyvista as pv
+from vtk.util import numpy_support
 
 def import_mesh(path_name):
     """
@@ -1437,9 +1438,6 @@ def remove_lines_from_vtp(input_vtp_path, output_vtp_path, cells_to_remove):
     writer.Write()
 
 
-from vtk.util import numpy_support
-
-
 def cl_distance_field(cl, eps, dis_field_map, output_vtp_file):
     """
     Add the distance field values to the centerline points and write the updated file
@@ -1483,12 +1481,124 @@ def cl_distance_field(cl, eps, dis_field_map, output_vtp_file):
     writer.SetFileName(output_vtp_file)
     writer.SetInputData(cl)
     writer.Write()
-    
+
     return transformed_array
 
 
-import time
-import pyvista as pv
+def pick_point(mesh_path):
+    """
+    Opens a VTK window displaying the mesh surface.
+    - Left-click to pick a point (previous marker, if any, is removed automatically).
+    - Press 'q' to finish and close.
+    Returns the (x,y,z) of the picked point.
+    """
+    # Read XDMF
+    reader = vtk.vtkXdmf3Reader()
+    reader.SetFileName(mesh_path)
+    reader.Update()
+    ug = reader.GetOutput()
+
+    # Extract surface
+    surf_filter = vtk.vtkDataSetSurfaceFilter()
+    surf_filter.SetInputData(ug)
+    surf_filter.Update()
+    surface = surf_filter.GetOutput()
+
+    # Setup rendering
+    renderer = vtk.vtkRenderer()
+    renwin = vtk.vtkRenderWindow()
+    renwin.AddRenderer(renderer)
+    iren = vtk.vtkRenderWindowInteractor()
+    iren.SetRenderWindow(renwin)
+
+    # Surface actor (fully opaque to prevent picking through)
+    mapper = vtk.vtkPolyDataMapper()
+    mapper.SetInputData(surface)
+    actor = vtk.vtkActor()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetOpacity(1.0)  # opaque surface
+    actor.GetProperty().EdgeVisibilityOn()
+    renderer.AddActor(actor)
+    renderer.SetBackground(1,1,1)
+
+    # Precompute sphere radius
+    b = surface.GetBounds()
+    diag = np.linalg.norm([b[1]-b[0], b[3]-b[2], b[5]-b[4]])
+    sphere_radius = diag * 0.01
+
+    picked = None     # store single pick
+    marker = None     # current sphere actor
+
+    class PickerStyle(vtk.vtkInteractorStyleTrackballCamera):
+        def __init__(self):
+            super().__init__()
+            self.AddObserver('RightButtonPressEvent', self.on_right_click)
+            self.AddObserver('KeyPressEvent', self.on_key_press)
+
+        def on_right_click(self, obj, event):
+            nonlocal picked, marker
+            # Remove previous marker if exists
+            if marker is not None:
+                renderer.RemoveActor(marker)
+                marker = None
+            # Get click position
+            x,y = iren.GetEventPosition()
+            picker = vtk.vtkPointPicker()
+            picker.Pick(x, y, 0, renderer)
+            pt = picker.GetPickPosition()
+            picked = pt
+            # Create new sphere marker
+            sphere = vtk.vtkSphereSource()
+            sphere.SetCenter(pt)
+            sphere.SetRadius(sphere_radius)
+            sphere.SetThetaResolution(16)
+            sphere.SetPhiResolution(16)
+            sphere.Update()
+            mmapper = vtk.vtkPolyDataMapper()
+            mmapper.SetInputData(sphere.GetOutput())
+            mactor = vtk.vtkActor()
+            mactor.SetMapper(mmapper)
+            mactor.GetProperty().SetColor(1,0,0)
+            renderer.AddActor(mactor)
+            marker = mactor
+            renwin.Render()
+
+        def on_key_press(self, obj, event):
+            key = self.GetInteractor().GetKeySym().lower()
+            if key == 'q':
+                iren.TerminateApp()
+
+    # Apply custom style
+    style = PickerStyle()
+    iren.SetInteractorStyle(style)
+
+    # Start interaction
+    renwin.Render()
+    iren.Initialize()
+    renwin.SetWindowName("Left-click: pick; 'q': finish")
+    iren.Start()
+
+    if picked is None:
+        print("No point was picked.")
+    return picked
+
+
+def find_point_index_in_vtu(vtu_path, point_xyz):
+    """
+    Given a VTU file and a 3D coordinate, find the index of the closest mesh point.
+    """
+    reader = vtk.vtkXMLUnstructuredGridReader()
+    reader.SetFileName(vtu_path)
+    reader.Update()
+    ug = reader.GetOutput()
+
+    vtk_pts = ug.GetPoints().GetData()
+    np_pts = numpy_support.vtk_to_numpy(vtk_pts)
+
+    tree = cKDTree(np_pts)
+    _, idx = tree.query(point_xyz)
+    return int(idx)
+
 
 def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False):
 
@@ -1520,18 +1630,13 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
 
     first_stop_timer = time.time()
     if pointsource is None:
-        while True:
-            user_input = input("The 'manual_ps' is missing. Please enter a point source (open the distance field and select id of the node you want): ")
-            if user_input.strip() == "":
-                point_index = automatic_pointsource(dis)
-                print("No point source selected; automatically selecting point source.")
-                break
-            else:
-                try:
-                    point_index = int(user_input)
-                    break  # Exit the loop if the input is a valid integer
-                except ValueError:
-                    print("Invalid input. Please enter an integer value.")
+        point_coord = pick_point(model_path)
+        print(f"User-selected point source: node {point_coord}")
+        if point_coord is None:
+            print("No point source selected. Automatically selecting point source.")
+            point_index = automatic_pointsource(dis)
+        else:
+            point_index = find_point_index_in_vtu(save_dir + "/eikonal/dis_map_p0_000000.vtu", point_coord)
     elif pointsource == "auto":
         point_index = automatic_pointsource(dis)
         print("Automatically selecting point source.")
@@ -1601,7 +1706,6 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
         file.write(f"There are {len(extreme_nodes)} extreme nodes: {extreme_nodes}.")
         file.close()
 
-
     with open(save_dir + "/time.txt", "w") as file:
         if mesh_time is not None:
             file.write(f"Meshing time: {mesh_time} seconds\n")
@@ -1649,7 +1753,6 @@ def process_all_models_in_directory(directory, base_save_dir, pointsource="auto"
         model_name = os.path.splitext(os.path.basename(model_file))[0]
 
         # Create a subdirectory for each model
-        # model_save_dir = os.path.join(base_save_dir, model_name)
         model_save_dir = base_save_dir+"/"+model_name+"/"+model_name
         os.makedirs(model_save_dir, exist_ok=True)
 
@@ -1661,7 +1764,7 @@ if __name__ == "__main__":
     # Hardcode the folder and save directory
     model_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now"
     base_save_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now/centerlines"
-    pointsource = "auto"  # Example point source (either a int or "auto")
+    pointsource = None  # Example point source (either a int or "auto")
     remove_cl = False  # Example flag to remove extra centerlines
 
     process_all_models_in_directory(model_directory, base_save_directory, pointsource)
