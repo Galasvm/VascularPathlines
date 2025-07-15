@@ -1,9 +1,12 @@
 import vtk
 import os
 import argparse
-import meshio
 import subprocess
 
+try:
+    import meshio
+except ImportError:
+    raise ImportError("Could not find meshio, please install using pip")
 
 def vtp_to_stl(vtp_file, output_directory):
     # Read the VTP file
