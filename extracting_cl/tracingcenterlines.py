@@ -27,10 +27,11 @@ from scipy.sparse.csgraph import connected_components
 from scipy.sparse import csr_matrix
 import os
 import argparse
-from model_to_mesh import *
 import time
 import pyvista as pv
 from vtk.util import numpy_support
+from model_to_mesh import *
+
 
 def import_mesh(path_name):
     """
@@ -1485,7 +1486,7 @@ def cl_distance_field(cl, eps, dis_field_map, output_vtp_file):
     return transformed_array
 
 
-def pick_point(mesh_path):
+def user_pick_pointsource(mesh_path):
     """
     Opens a VTK window displaying the mesh surface.
     - Left-click to pick a point (previous marker, if any, is removed automatically).
@@ -1600,6 +1601,100 @@ def find_point_index_in_vtu(vtu_path, point_xyz):
     return int(idx)
 
 
+def user_pick_lines(vtp_path):
+    """
+    Display a VTP of centerlines, let the user right-click to
+    toggle-select cells (lines). Press 'q' to finish and close.
+    Returns a list of selected cell IDs.
+    """
+    # Read the polydata
+    reader = vtk.vtkXMLPolyDataReader()
+    reader.SetFileName(vtp_path)
+    reader.Update()
+    pd = reader.GetOutput()
+
+    # Mapper and actor for full centerlines
+    mapper = vtk.vtkPolyDataMapper()
+    mapper.SetInputData(pd)
+    actor = vtk.vtkActor()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetColor(0.2, 0.2, 0.8)
+    actor.GetProperty().SetLineWidth(2)
+
+    # Renderer, window, interactor
+    renderer = vtk.vtkRenderer()
+    renderer.AddActor(actor)
+    renderer.SetBackground(1, 1, 1)
+    renwin = vtk.vtkRenderWindow()
+    renwin.AddRenderer(renderer)
+    iren = vtk.vtkRenderWindowInteractor()
+    iren.SetRenderWindow(renwin)
+
+    selected_ids = []
+    selected_actors = {}
+
+    class CellStyle(vtk.vtkInteractorStyleTrackballCamera):
+        def __init__(self, parent=None):
+            super().__init__()
+            self.AddObserver('RightButtonPressEvent', self.on_right)
+            self.AddObserver('KeyPressEvent', self.on_key)
+
+        def on_right(self, obj, event):
+            x, y = iren.GetEventPosition()
+            picker = vtk.vtkCellPicker()
+            picker.SetTolerance(0.0005)
+            picker.Pick(x, y, 0, renderer)
+            cid = picker.GetCellId()
+            if cid < 0:
+                return
+            # Toggle selection
+            if cid in selected_actors:
+                renderer.RemoveActor(selected_actors[cid])
+                selected_ids.remove(cid)
+                del selected_actors[cid]
+            else:
+                # Extract the single cell
+                ids = vtk.vtkIdList()
+                ids.InsertNextId(cid)
+                extract = vtk.vtkExtractCells()
+                extract.SetInputData(pd)
+                extract.SetCellList(ids)
+                extract.Update()
+                ug_sel = extract.GetOutput()
+                # Convert to PolyData
+                geom = vtk.vtkGeometryFilter()
+                geom.SetInputData(ug_sel)
+                geom.Update()
+                sel_poly = geom.GetOutput()
+
+                sel_mapper = vtk.vtkPolyDataMapper()
+                sel_mapper.SetInputData(sel_poly)
+                sel_actor = vtk.vtkActor()
+                sel_actor.SetMapper(sel_mapper)
+                sel_actor.GetProperty().SetColor(1, 0, 0)
+                sel_actor.GetProperty().SetLineWidth(4)
+                renderer.AddActor(sel_actor)
+
+                selected_actors[cid] = sel_actor
+                selected_ids.append(cid)
+            renwin.Render()
+
+        def on_key(self, obj, event):
+            key = self.GetInteractor().GetKeySym()
+            if key.lower() == 'q':
+                iren.TerminateApp()
+
+    # Apply custom style and start
+    style = CellStyle()
+    iren.SetInteractorStyle(style)
+    renwin.Render()
+    renwin.SetWindowName("Left-click: toggle select; 'q': finish")
+    iren.Initialize()
+    iren.Start()
+
+    return selected_ids
+
+
 def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False):
 
     if model_path.endswith(".xdmf"):
@@ -1607,6 +1702,7 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
         mesh_time = None
 
     elif model_path.endswith(".vtp") or model_path.endswith(".stl"):
+        print("Converting surface mesh to XDMF format...")
         start_time = time.time()
         main(model_path, save_dir)
         end_time = time.time()
@@ -1630,7 +1726,11 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
 
     first_stop_timer = time.time()
     if pointsource is None:
-        point_coord = pick_point(model_path)
+        print("No point source provided. Please select a point source on the mesh (window should open). Left click to select a point and press 'q' to finish.")
+        if model_path.endswith(".xdmf"):
+            point_coord = user_pick_pointsource(model_path)
+        else:
+            point_coord = user_pick_pointsource(save_dir + ".xdmf")
         print(f"User-selected point source: node {point_coord}")
         if point_coord is None:
             print("No point source selected. Automatically selecting point source.")
@@ -1712,30 +1812,18 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
         file.write(f"Total run time: {run_time} seconds")
         file.close()
 
-    # Ask if the user wants to remove any extra centerlines
     if remove_extra_centerlines:
         while True:
-            response = input("Please visualize the centerline. Are there any extra centerlines you would like to remove? [yes/no]: ").strip().lower()
-            if response == "" or response == "no":
+            print("Please visualize the centerline. If there are any extra centerlines you would like to remove, left-click on them to select them. Press 'q' to finish.")
+            ids = user_pick_lines(save_dir + "/centerlines/smooth_clean_centerline.vtp")
+            print(f"Selected lines to remove: {ids}")
+            if not ids:
                 print("No lines to remove. Ending the program.")
                 break
-            elif response == "yes":
-                # Prompt for cell indices to remove
-                while True:
-                    try:
-                        cells_to_remove = input("Please enter the indexes of the lines to remove as a comma-separated list (e.g., 1, 2, 3): ")
-                        cells_to_remove = [int(i.strip()) for i in cells_to_remove.split(",")]
-
-                        print(f"Removing cells with indices: {cells_to_remove}")
-                        output_vtp_path = save_dir + "/centerlines/smooth_centerline.vtp"
-                        remove_lines_from_vtp(save_dir + "/centerlines/smooth_centerline.vtp", output_vtp_path, cells_to_remove)
-                        print(f"Modified centerline saved to {output_vtp_path}")
-                        break
-                    except ValueError:
-                        print("Invalid input. Please enter a list of integers separated by commas.")
-                break
             else:
-                print("Invalid response. Please enter 'yes' or 'no'.")
+                output_vtp_path = save_dir + "/centerlines/smooth_clean_centerline.vtp"
+                remove_lines_from_vtp(save_dir + "/centerlines/smooth_clean_centerline.vtp", output_vtp_path, ids)
+                break
 
 
 import glob
@@ -1760,21 +1848,21 @@ def process_all_models_in_directory(directory, base_save_dir, pointsource="auto"
         main_(model_file, model_save_dir, pointsource, remove_extra_centerlines)
 
 
-if __name__ == "__main__":
-    # Hardcode the folder and save directory
-    model_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now"
-    base_save_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now/centerlines"
-    pointsource = None  # Example point source (either a int or "auto")
-    remove_cl = False  # Example flag to remove extra centerlines
-
-    process_all_models_in_directory(model_directory, base_save_directory, pointsource)
-
 # if __name__ == "__main__":
-#     parser = argparse.ArgumentParser(description="Process centerline tracing.")
-#     parser.add_argument("directory", type=str, help="Directory containing the model files.")
-#     parser.add_argument("save_dir", type=str, help="Directory to save the results.")
-#     parser.add_argument("--pointsource", type=int, help="Index of the point source.", default=None)
-#     parser.add_argument("--remove_extra_centerlines", action="store_true", help="Flag to remove extra centerlines.")
+#     # Hardcode the folder and save directory
+#     model_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now"
+#     base_save_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now/centerlines"
+#     pointsource = None  # Example point source (either a int or "auto")
+#     remove_cl = False  # Example flag to remove extra centerlines
 
-#     args = parser.parse_args()
-#     process_all_models_in_directory(args.directory, args.save_dir, args.pointsource, args.remove_extra_centerlines)
+#     process_all_models_in_directory(model_directory, base_save_directory, pointsource)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Process centerline tracing.")
+    parser.add_argument("directory", type=str, help="Directory containing the model files.")
+    parser.add_argument("save_dir", type=str, help="Directory to save the results.")
+    parser.add_argument("--pointsource", type=str, help="Index of the point source.", default="auto")
+    parser.add_argument("--remove_extra_centerlines", action="store_true", help="Flag to remove extra centerlines.")
+
+    args = parser.parse_args()
+    process_all_models_in_directory(args.directory, args.save_dir, args.pointsource, args.remove_extra_centerlines)

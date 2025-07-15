@@ -3,4 +3,4 @@ postprocessing
 __pycache__
 convert_vtu_and_vtp.py
 point_picker.py
-picked_points.txt
+extracting_cl/main.py
