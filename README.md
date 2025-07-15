@@ -1,18 +1,59 @@
 # Automatic Vascular Pathline Extraction
-Framework for automatic extraction of pathlines from vascular geometries. This framework supports extracting pathlines from surface meshes (.vtp and .stl files) or volumetric mehses (xdmf files)
+
+This framework provides an interactive workflow to extract centerlines (pathlines) from 3D vascular models. It can run fully automatically or pause for simple user steps (point‑source selection or postprocessing).
+
+---
 
 ## Dependencies
 
-You need to install fenicsx (dolfinx 0.9.0) using the instructions here. 
+1. **FEniCSx (>= 0.9)**  
+   Solve the Eikonal equation on a volumetric mesh.  
+   Instructions: https://fenicsproject.org/download/
+
+2. **Python packages**  
+    ```bash
+    pip install meshio scipy h5py
+    ```
+
+3. **fTetWild (optional, but required for surface‑mesh extraction)**  
+
+    Extract pathlines directly from surface meshes (`.vtp`, `.stl`).  
+    Build/install instructions: https://github.com/wildmeshing/fTetWild
+
+    After installing fTetWild, add its binary to your environment:
+
+    ```bash
+    # e.g. add to ~/.bashrc or ~/.zshrc
+    export FTETWILD_PATH="/full/path/to/FloatTetwild_bin"
+    ```
+
+    The script will first look for `$FTETWILD_PATH`, then fall back to `which FloatTetwild_bin`.
+
+---
 
 ## Usage
-### Input/output Formal
-The inputs are either surface meshes .vtp/.stl format
 
-The output is a vtp file with the radius at each point included.
+```bash
+python3 extracting_cl/model_to_mesh.py <models_dir> <save_dir>
+````
 
-### Features
+* `<models_dir>`
+  Directory of input files. Supported formats:
 
-the framework is easy to use
+  * triangle surface meshes: `.vtp` / `.stl`
+  * tetrahedral volumetric meshes: `.xdmf`
 
+* `<save_dir>`
+  Directory where extracted centerlines will be saved.
+
+### Optional arguments
+
+* `--pointsource <index|auto>`
+  Select inlet point source:
+
+  * `auto` (default): detect inlet automatically
+  * `None`: disable auto-detection and prompt for selection
+
+* `--remove_extra_centerlines`
+  Launch an interactive selector to remove unwanted centerlines after extraction.
 

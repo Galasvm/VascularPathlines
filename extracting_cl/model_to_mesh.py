@@ -1,12 +1,21 @@
 import vtk
-import os
 import argparse
 import subprocess
+import os, shutil, sys
 
 try:
     import meshio
 except ImportError:
     raise ImportError("Could not find meshio, please install using pip")
+
+# Check if FTETWILD_PATH is set in the environment variables
+ftetwild_path = os.environ.get("FTETWILD_PATH")
+
+if ftetwild_path is None:
+    ftetwild_path = shutil.which("FloatTetwild_bin")
+if ftetwild_path is None:
+    sys.exit("ERROR: cannot find fTetWild. "
+             "Set $FTETWILD_PATH or add FloatTetwild_bin to your PATH.")
 
 
 def vtp_to_stl(vtp_file, output_directory):
@@ -29,7 +38,7 @@ def vtp_to_stl(vtp_file, output_directory):
 def stl_to_msh(stl_file, output_directory):
     edge_length = 0.007  # ideal_edge_length = diag_of_bbox * L. (double, optional, default: 0.05) GOOD 0.007
     eps = 0.0005 # epsilon = diag_of_bbox * EPS. (double, optional, default: 1e-3) GOOD 0.0005
-    float_tetwild_path = "/Users/galasanchezvanmoer/Desktop/PhD_Project/GitHub_repositories/fTetWild/build/FloatTetwild_bin"
+    float_tetwild_path = ftetwild_path
     command = f"{float_tetwild_path} -i {stl_file} -o {output_directory} --lr {edge_length} --epsr {eps}"
     subprocess.run(command, shell=True, check=True)
 

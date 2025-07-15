@@ -1880,15 +1880,6 @@ def process_all_models_in_directory(directory, base_save_dir, pointsource="auto"
         main_(model_file, model_save_dir, pointsource, remove_extra_centerlines)
 
 
-# if __name__ == "__main__":
-#     # Hardcode the folder and save directory
-#     model_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now"
-#     base_save_directory = "/Users/galasanchezvanmoer/PhD_project2/Centerline_project/VMR_now/centerlines"
-#     pointsource = None  # Example point source (either a int or "auto")
-#     remove_cl = False  # Example flag to remove extra centerlines
-
-#     process_all_models_in_directory(model_directory, base_save_directory, pointsource)
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process centerline tracing.")
     parser.add_argument("directory", type=str, help="Directory containing the model files.")
