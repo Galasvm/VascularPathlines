@@ -4,3 +4,4 @@ __pycache__
 convert_vtu_and_vtp.py
 point_picker.py
 extracting_cl/main.py
+test_cases/results/

@@ -32,7 +32,7 @@ This framework provides an interactive workflow to extract centerlines (pathline
 ## Usage
 
 ```bash
-python3 extracting_cl/model_to_mesh.py <models_dir> <save_dir>
+python3 extracting_cl/tracingcenterlines.py <models_dir> <save_dir>
 ````
 
 * `<models_dir>`
@@ -54,3 +54,20 @@ python3 extracting_cl/model_to_mesh.py <models_dir> <save_dir>
 
 * `-r,--remove_extra_centerlines`
   Launch an interactive selector to remove unwanted centerlines after extraction.
+
+### Examples
+
+* **Extraction with automatic inlet detection**
+```bash
+python3 extracting_cl/tracingcenterlines.py test_cases/vol_mesh test_cases/results/AutomaticDetection
+````
+
+* **Allow user to select point source**
+```bash
+python3 extracting_cl/tracingcenterlines.py test_cases/vol_mesh test_cases/results/UserSelected -p True
+````
+
+* **Interactive cleanup of extra centerlines (if necessary)**
+```bash
+python3 extracting_cl/tracingcenterlines.py test_cases/vol_mesh test_cases/results/UserSelected -p True
+````
