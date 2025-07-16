@@ -7,8 +7,7 @@ This framework provides an interactive workflow to extract centerlines (pathline
 ## Dependencies
 
 1. **FEniCSx (>= 0.9)**  
-   Solve the Eikonal equation on a volumetric mesh.  
-   Instructions: https://fenicsproject.org/download/
+   Used to solve the Eikonal equation on a volumetric mesh. Instructions for installation can be found [here](https://fenicsproject.org/download/)
 
 2. **Python packages**  
     ```bash
@@ -17,13 +16,12 @@ This framework provides an interactive workflow to extract centerlines (pathline
 
 3. **fTetWild (optional, but required for surface‑mesh extraction)**  
 
-    Extract pathlines directly from surface meshes (`.vtp`, `.stl`).  
-    Build/install instructions: https://github.com/wildmeshing/fTetWild
+    Used to create a volumetric meshs from triangle surface meshes (`.vtp`, `.stl`).  
+    Build/install instructions can be found [here](https://github.com/wildmeshing/fTetWild)
 
     After installing fTetWild, add its binary to your environment:
 
     ```bash
-    # e.g. add to ~/.bashrc or ~/.zshrc
     export FTETWILD_PATH="/full/path/to/FloatTetwild_bin"
     ```
 
