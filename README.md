@@ -46,12 +46,11 @@ python3 extracting_cl/model_to_mesh.py <models_dir> <save_dir>
 
 ### Optional arguments
 
-* `--pointsource <index|auto>`
+* `-p,--pointsource <bool>`
   Select inlet point source:
 
-  * `auto` (default): detect inlet automatically
-  * `None`: disable auto-detection and prompt for selection
+  * `False` (default): detect inlet automatically
+  * `True`: launch an interactive relector to allow user to select the inlet
 
-* `--remove_extra_centerlines`
+* `-r,--remove_extra_centerlines`
   Launch an interactive selector to remove unwanted centerlines after extraction.
-

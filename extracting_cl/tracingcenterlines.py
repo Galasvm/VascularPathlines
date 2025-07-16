@@ -1722,7 +1722,7 @@ def user_pick_lines(vtp_path, vessel_xdmf_path=None):
 
     return selected_ids
 
-def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False):
+def main_(model_path, save_dir, pointsource=False, remove_extra_centerlines=False):
 
     if model_path.endswith(".xdmf"):
         domain = import_mesh(model_path)
@@ -1752,7 +1752,7 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
     # provide one, then it will be automatically selected.
 
     first_stop_timer = time.time()
-    if pointsource is None:
+    if pointsource is True:
         print("No point source provided. Please select a point source on the mesh (window should open). Left click to select a point and press 'q' to finish.")
         if model_path.endswith(".xdmf"):
             point_coord = user_pick_pointsource(model_path)
@@ -1764,7 +1764,7 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
             point_index = automatic_pointsource(dis)
         else:
             point_index = find_point_index_in_vtu(save_dir + "/eikonal/dis_map_p0_000000.vtu", point_coord)
-    elif pointsource == "auto":
+    elif pointsource is False:
         point_index = automatic_pointsource(dis)
         print("Automatically selecting point source.")
     else:
@@ -1860,7 +1860,7 @@ def main_(model_path, save_dir, pointsource=None, remove_extra_centerlines=False
 
 import glob
 
-def process_all_models_in_directory(directory, base_save_dir, pointsource="auto", remove_extra_centerlines=False):
+def process_all_models_in_directory(directory, base_save_dir, pointsource=False, remove_extra_centerlines=False):
     # Find all model files in the specified directory
     vtp_files = glob.glob(os.path.join(directory, "*.vtp"))
     xdmf_files = glob.glob(os.path.join(directory, "*.xdmf"))
@@ -1884,8 +1884,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process centerline tracing.")
     parser.add_argument("directory", type=str, help="Directory containing the model files.")
     parser.add_argument("save_dir", type=str, help="Directory to save the results.")
-    parser.add_argument("--pointsource", type=str, help="Index of the point source.", default="auto")
-    parser.add_argument("--remove_extra_centerlines", action="store_true", help="Flag to remove extra centerlines.")
+    parser.add_argument("-p", "--pointsource", type=bool, help="False for automatic point source selection", default=False)
+    parser.add_argument("-r", "--remove_extra_centerlines", action="store_true", help="Flag to remove extra centerlines.")
 
     args = parser.parse_args()
     process_all_models_in_directory(args.directory, args.save_dir, args.pointsource, args.remove_extra_centerlines)
