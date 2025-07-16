@@ -1603,7 +1603,7 @@ def find_point_index_in_vtu(vtu_path, point_xyz):
 
 def user_pick_lines(vtp_path, vessel_xdmf_path=None):
     """
-    Display a VTP of centerlines, let the user right-click to
+    Display a VTP of centerlines, let the user left-click to
     toggle-select cells (lines). Press 'q' to finish and close.
     Optionally overlay vessel geometry from XDMF for context.
     Returns a list of selected cell IDs.
@@ -1716,7 +1716,7 @@ def user_pick_lines(vtp_path, vessel_xdmf_path=None):
     style = CellStyle()
     iren.SetInteractorStyle(style)
     renwin.Render()
-    renwin.SetWindowName("Right-click: toggle select lines; 'q': finish")
+    renwin.SetWindowName("Left-click: toggle select lines; 'q': finish")
     iren.Initialize()
     iren.Start()
 
