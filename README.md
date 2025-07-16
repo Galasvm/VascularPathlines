@@ -35,7 +35,7 @@ This framework provides an interactive workflow to extract centerlines (pathline
     After installing fTetWild, set it as a conda-env variable:
 
     ```bash
-    conda activate myenv
+    conda activate pathline
     conda env config vars set FTETWILD_PATH="/full/path/to/FloatTetwild_bin"
     ```
     
